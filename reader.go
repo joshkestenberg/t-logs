@@ -11,46 +11,57 @@ import (
 )
 
 type LogEntry struct {
-	Level   string
-	Date    string
-	Time    string
-	Descrip string
-	Other   map[string]string
+	Level   string            `json:"level"`
+	Date    string            `json:"date"`
+	Time    string            `json:"time"`
+	Descrip string            `json:"descrip"`
+	Module  string            `json:"module"`
+	Other   map[string]string `json:"other"`
 }
 
 //func to write json to file
-func writeJson(entry LogEntry) {
-	log, err := os.OpenFile("log.json", os.O_RDWR|os.O_APPEND, 0600)
-	if err != nil {
-		panic(err)
-	}
-
-	defer log.Close()
+func writeJson(entry LogEntry, jsonLog *os.File) error {
 
 	jsonLogEntry, err := json.Marshal(entry)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	_, err = log.WriteString(string(jsonLogEntry) + "\n")
+	_, err = jsonLog.WriteString(string(jsonLogEntry) + "\n")
 	if err != nil {
-		panic(err)
+		return err
 	}
+
+	return err
+}
+
+func openLog(filepath string) *os.File {
+	//open log file
+	file, err := os.Open("./tendermint.log")
+	if err != nil {
+		log.Fatal(err)
+	}
+	return file
 }
 
 // set block bool to false in order to run non-block processing by default
 var block bool = false
 
 func main() {
-	//generate json file
-	ioutil.WriteFile("log.json", nil, 0600)
-
-	//open log file
-	file, err := os.Open("./tendermint.log")
+	//generate and open json file
+	err := ioutil.WriteFile("log.json", nil, 0600)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer file.Close()
+
+	jsonLog, err := os.OpenFile("log.json", os.O_RDWR|os.O_APPEND, 0600)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer jsonLog.Close()
+
+	file := openLog("./tendermint.log")
 
 	//intialize scanner and scan each line
 	scanner := bufio.NewScanner(file)
@@ -59,12 +70,8 @@ func main() {
 		//var for each full line of text
 		str := scanner.Text()
 
-		//hacky fix to temporarily replace char that was causing problems
-		modStr := strings.Replace(str, "[]", "sub", -1)
-		fmt.Println(modStr)
-
 		//skip over blank lines
-		if modStr == "" {
+		if str == "" {
 			continue
 		}
 
@@ -75,33 +82,36 @@ func main() {
 			var entry LogEntry
 
 			//parse for level
-			levelParse := strings.Split(modStr, "[")
-			entry.Level = levelParse[0]
+			levelParse := strings.SplitAfterN(str, "[", 2)
+			entry.Level = strings.Replace(levelParse[0], "[", "", 1)
 
 			//parse for date and time
-			datetimeParse := strings.Split(levelParse[1], "]")
+			datetimeParse := strings.SplitAfterN(levelParse[1], "]", 2)
+			fmt.Println(datetimeParse[1])
 			entry.Date = strings.Split(datetimeParse[0], "|")[0]
-			entry.Time = strings.Split(datetimeParse[0], "|")[1]
+			entry.Time = strings.Replace(strings.Split(datetimeParse[0], "|")[1], "]", "", 1)
 
 			//parse for descrip
 			descripParse := strings.Split(datetimeParse[1], "module")
-
 			descrip := descripParse[0]
 			//if the proceeding lines make up a block, we must process them differently by setting block to true
 			if strings.Contains(descrip, "Block{") {
-				m := make(map[string]string)
-				m["module"] = "consensus"
-				entry.Descrip = "Block"
+				entry.Module = "consensus"
 
+				if strings.Contains(descrip, "signed proposal block") {
+					entry.Descrip = "Signed proposal block"
+				} else {
+					entry.Descrip = "Block"
+				}
 				block = true
 
 				//write json
-				writeJson(entry)
+				writeJson(entry, jsonLog)
 
 				continue
 			} else {
-				//set Descrip while replacing previously subbed []
-				entry.Descrip = strings.Replace(descrip, "sub", "[]", -1)
+				//set Descrip
+				entry.Descrip = descrip
 			}
 
 			//parse for all other entries
@@ -113,12 +123,12 @@ func main() {
 			//iterate over other entries and add them to map
 			for _, element := range mapParse {
 				valKey := strings.SplitN(element, " ", 2)
-				//set Value while replacing previously subbed []
-				value := strings.Replace(valKey[0], "sub", "[]", -1)
-
-				m[key] = value
-
-				if len(valKey) > 1 {
+				//set Value
+				value := valKey[0]
+				if key != "module" {
+					m[key] = value
+				} else if key == "module" && len(valKey) > 1 {
+					entry.Module = value
 					key = valKey[1]
 				}
 			}
@@ -127,7 +137,7 @@ func main() {
 			entry.Other = m
 
 			//write json
-			writeJson(entry)
+			writeJson(entry, jsonLog)
 		} else {
 			// keep scanning and skipping lines until end of block
 			if strings.Contains(str, "}#") && strings.Contains(str, "module") {
@@ -135,7 +145,6 @@ func main() {
 				continue
 			}
 		}
-
 	}
 
 	if err := scanner.Err(); err != nil {
