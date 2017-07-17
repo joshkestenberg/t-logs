@@ -87,7 +87,7 @@ func main() {
 
 			//parse for date and time
 			datetimeParse := strings.SplitAfterN(levelParse[1], "]", 2)
-			fmt.Println(datetimeParse[1])
+
 			entry.Date = strings.Split(datetimeParse[0], "|")[0]
 			entry.Time = strings.Replace(strings.Split(datetimeParse[0], "|")[1], "]", "", 1)
 
@@ -111,25 +111,37 @@ func main() {
 				continue
 			} else {
 				//set Descrip
-				entry.Descrip = descrip
+				entry.Descrip = strings.TrimSpace(descrip)
 			}
 
 			//parse for all other entries
 			mapParse := strings.Split(descripParse[1], "=")[1:]
-
 			//set key to module for first iteration of loop (always module) and create empty map
 			key := "module"
 			m := make(map[string]string)
 			//iterate over other entries and add them to map
 			for _, element := range mapParse {
-				valKey := strings.SplitN(element, " ", 2)
+				var valKey []string
+
+				if strings.Contains(element, `"`) {
+					valKey = strings.Split(element, `"`)[1:]
+				} else {
+					valKey = strings.SplitN(element, " ", 2)
+				}
+				fmt.Println(valKey)
 				//set Value
-				value := valKey[0]
-				if key != "module" {
-					m[key] = value
-				} else if key == "module" && len(valKey) > 1 {
+				value := strings.TrimSpace(valKey[0])
+
+				if key == "module" && len(valKey) > 1 {
 					entry.Module = value
-					key = valKey[1]
+					key = strings.TrimSpace(valKey[1])
+				} else if key == "module" {
+					entry.Module = value
+				} else if key != "module" && len(valKey) > 1 {
+					m[key] = value
+					key = strings.TrimSpace(valKey[1])
+				} else if key != "module" {
+					m[key] = value
 				}
 			}
 
