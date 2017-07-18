@@ -21,7 +21,7 @@ type LogEntry struct {
 
 //open log file
 func OpenLog(filepath string) (*os.File, error) {
-	return os.Open("./tendermint.log")
+	return os.Open(filepath)
 }
 
 //generate and open json file
