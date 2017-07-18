@@ -21,18 +21,18 @@ type LogEntry struct {
 
 //open log file
 func OpenLog(filepath string) (*os.File, error) {
-	file, err := os.Open("./tendermint.log")
-
-	return file, err
+	return os.Open("./tendermint.log")
 }
 
 //generate and open json file
 func InitJson(filename string) (*os.File, error) {
+
 	err := ioutil.WriteFile(filename, nil, 0600)
+	if err != nil {
+		return nil, err
+	}
 
-	jsonLog, err := os.OpenFile(filename, os.O_RDWR|os.O_APPEND, 0600)
-
-	return jsonLog, err
+	return os.OpenFile(filename, os.O_RDWR|os.O_APPEND, 0600)
 }
 
 func UnmarshalLines(startLn int, endLn int, file *os.File) ([]LogEntry, error) {
@@ -46,6 +46,7 @@ func UnmarshalLines(startLn int, endLn int, file *os.File) ([]LogEntry, error) {
 	//basic error handling
 	if startLn < 1 || startLn > endLn {
 		err = fmt.Errorf("startLn must be greater than 1 and less than endLn; your input [startLn: %d, endLn: %d]", startLn, endLn)
+		return nil, err
 	}
 
 	//intialize scanner and scan each line
@@ -153,7 +154,7 @@ func UnmarshalLines(startLn int, endLn int, file *os.File) ([]LogEntry, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	return entries, err
