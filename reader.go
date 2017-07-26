@@ -1,12 +1,14 @@
 package main
 
 import (
+	"C"
 	"bufio"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -37,7 +39,15 @@ func InitJSON(filename string) (*os.File, error) {
 }
 
 //RenderDoc removes blocks and spaces to prep doc for parse
-func RenderDoc(file *os.File) (*os.File, error) {
+func RenderDoc(file *os.File, startLn int, endLn int) (*os.File, error) {
+	count := 1
+	var err error
+
+	//basic error handling
+	if startLn < 1 || startLn > endLn {
+		err = fmt.Errorf("startLn must be greater than 1 and less than endLn; your input [startLn: %d, endLn: %d]", startLn, endLn)
+		return nil, err
+	}
 
 	fileStat, err := file.Stat()
 	if err != nil {
@@ -60,15 +70,25 @@ func RenderDoc(file *os.File) (*os.File, error) {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		str := scanner.Text()
-		if strings.Contains(str, `|`) {
-			if _, err = renderFile.WriteString(str + "\n"); err != nil {
-				return nil, err
+		if count <= endLn && count >= startLn {
+			if strings.Contains(str, `|`) {
+				_, err = renderFile.WriteString(str + "\n")
+				if err != nil {
+					return nil, err
+				}
 			}
+			count++
+		} else if count < startLn {
+			count++
+		} else {
+			break
 		}
 	}
+
 	return os.OpenFile(renderName, os.O_RDWR|os.O_APPEND, 0600)
 }
 
+//UnmarshalLine takes one line at a time and outputs a struct
 func UnmarshalLine(line string) (LogEntry, error) {
 	var entry LogEntry
 	var err error
@@ -141,36 +161,21 @@ func UnmarshalLine(line string) (LogEntry, error) {
 }
 
 //UnmarshalLines converts given lines to an array of structs
-func UnmarshalLines(startLn int, endLn int, file *os.File) ([]LogEntry, error) {
-	count := 1
+func UnmarshalLines(file *os.File) ([]LogEntry, error) {
 	var str string
 	var err error
 	var entries []LogEntry
-
-	//basic error handling
-	if startLn < 1 || startLn > endLn {
-		err = fmt.Errorf("startLn must be greater than 1 and less than endLn; your input [startLn: %d, endLn: %d]", startLn, endLn)
-		return nil, err
-	}
 
 	//intialize scanner and scan each line
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		//scan each applicable line, make struct, add struct to []struct
-		if count >= startLn && count <= endLn {
-			str = scanner.Text()
-			entry, err := UnmarshalLine(str)
-			if err != nil {
-				return nil, err
-			}
-			entries = append(entries, entry)
-			count++
-		} else if count < startLn {
-			count++
-			continue
-		} else if count > endLn {
-			break
+		str = scanner.Text()
+		entry, err := UnmarshalLine(str)
+		if err != nil {
+			return nil, err
 		}
+		entries = append(entries, entry)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -199,24 +204,35 @@ func MarshalJSON(entries []LogEntry, jsonLog *os.File) error {
 	return err
 }
 
-// set block bool to false in order to run non-block processing by default
-// var block bool = false
-
 func main() {
 
-	file, err := OpenLog("tendermint.log")
+	args := os.Args
+	fmt.Println(args)
+
+	logName := args[1]
+	jsonName := args[2]
+	startLn, err := strconv.Atoi(args[3])
+	if err != nil {
+		log.Fatal(err)
+	}
+	endLn, err := strconv.Atoi(args[4])
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	jsonLog, err := InitJSON("log.json")
+	file, err := OpenLog(logName)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	renderFile, err := RenderDoc(file)
+	jsonLog, err := InitJSON(jsonName)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	entries, err := UnmarshalLines(1, 60000, renderFile)
+	renderFile, err := RenderDoc(file, startLn, endLn)
+
+	entries, err := UnmarshalLines(renderFile)
 	if err != nil {
 		log.Fatal(err)
 	}

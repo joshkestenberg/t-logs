@@ -55,7 +55,7 @@ func TestInitJSON(t *testing.T) {
 
 func TestRenderDoc(t *testing.T) {
 	file, _ := OpenLog("./tendermint.log")
-	render, err := RenderDoc(file)
+	render, err := RenderDoc(file, 1, 10)
 	if err != nil {
 		t.Log(err)
 		t.Fail()
@@ -72,7 +72,7 @@ func TestRenderDoc(t *testing.T) {
 	}
 
 	//check for invalid lines
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(render)
 	for scanner.Scan() {
 		str := scanner.Text()
 		if !strings.Contains(str, `|`) {
@@ -129,37 +129,7 @@ func TestUnmarshalLine(t *testing.T) {
 }
 
 func TestUnmarshalLines(t *testing.T) {
-	file, _ := OpenLog("./tendermint.log")
-
-	casesLines := []struct{ startLn, endLn int }{
-		{2, 1},
-		{0, 3},
-		{1, 3},
-		{1020, 1022},
-	}
-
-	//test correct input line range
-	for _, c := range casesLines[:2] {
-		_, err := UnmarshalLines(c.startLn, c.endLn, file)
-		if err == nil {
-			t.Log("expected err: ", err)
-			t.Fail()
-		}
-	}
-
-	//test number of entries returned
-	for _, c := range casesLines[2:4] {
-		entries, err := UnmarshalLines(c.startLn, c.endLn, file)
-		if len(entries) != 3 {
-			t.Log("expected entries: 3, returned entries: ", len(entries))
-			t.Fail()
-		} else if err != nil {
-			t.Log(err)
-			t.Fail()
-		}
-	}
-
-	file.Close()
+	// TODO: test correct line number renders correct output
 }
 
 func TestMarshalJSON(t *testing.T) {
