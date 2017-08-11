@@ -428,7 +428,21 @@ func checkVotes(status Status, entry LogEntry, pvUnique bool, pvArr []string, pc
 					return status, pvUnique, pvArr, pcUnique, pcArr, err
 				}
 
-				status.PreVotes[i] = "X"
+				heightStr := strings.Split(strings.Split(vote, "/")[0], " ")[2]
+				roundStr := strings.Split(vote, "/")[1]
+
+				height, err := strconv.Atoi(heightStr)
+				if err != nil {
+					return status, pvUnique, pvArr, pcUnique, pcArr, err
+				}
+				round, err := strconv.Atoi(roundStr)
+				if err != nil {
+					return status, pvUnique, pvArr, pcUnique, pcArr, err
+				}
+
+				if height == status.Height && round == status.Round {
+					status.PreVotes[i] = "X"
+				}
 			}
 		}
 
@@ -451,7 +465,21 @@ func checkVotes(status Status, entry LogEntry, pvUnique bool, pvArr []string, pc
 					return status, pvUnique, pvArr, pcUnique, pcArr, err
 				}
 
-				status.PreCommits[i] = "X"
+				heightStr := strings.Split(strings.Split(vote, "/")[0], " ")[2]
+				roundStr := strings.Split(vote, "/")[1]
+
+				height, err := strconv.Atoi(heightStr)
+				if err != nil {
+					return status, pvUnique, pvArr, pcUnique, pcArr, err
+				}
+				round, err := strconv.Atoi(roundStr)
+				if err != nil {
+					return status, pvUnique, pvArr, pcUnique, pcArr, err
+				}
+
+				if height == status.Height && round == status.Round {
+					status.PreCommits[i] = "X"
+				}
 			}
 		}
 	}
