@@ -22,6 +22,16 @@ type LogEntry struct {
 	Other   map[string]string `json:"other"`
 }
 
+type Status struct {
+	Height     int
+	Round      int
+	Step       string
+	Proposal   string
+	BlockParts []string
+	PreVotes   []string
+	PreCommits []string
+}
+
 //OpenLog opens log file
 func OpenLog(filepath string) (*os.File, error) {
 	return os.Open(filepath)
@@ -204,10 +214,215 @@ func MarshalJSON(entries []LogEntry, jsonLog *os.File) error {
 	return err
 }
 
+//ParseJSON uses JSON query to find relevant data
+func getStatus(entries []LogEntry) (Status, error) {
+	var err error
+	var status Status
+	var intVals int
+	var bpArr []string
+	var pvArr []string
+	var pcArr []string
+	var myNode int
+
+	bpUnique := true
+	pvUnique := true
+	pcUnique := true
+	status.Proposal = "no"
+
+	ln := 0
+
+	for _, entry := range entries {
+		ln += 1
+		//find number of validators
+		if val, ok := entry.Other["localPV"]; ok {
+			vals := strings.Split(val, "{")[1]
+			stringVals := strings.Split(vals, ":")[0]
+			intVals, err = strconv.Atoi(stringVals)
+			if err != nil {
+				return status, err
+			}
+		}
+
+		//find my own node's vote number
+		if entry.Descrip == "Signed and pushed vote" {
+			vote := entry.Other["vote"]
+
+			temp := strings.Split(vote, "{")[1]
+			i, err := strconv.Atoi(strings.Split(temp, ":")[0])
+			if err != nil {
+				return status, err
+			}
+
+			myNode = i
+		}
+
+		//check for new round; set HRS, and reset votes if new round
+		if strings.Contains(entry.Descrip, "enter") && !strings.Contains(entry.Descrip, "Invalid") {
+
+			descrip := entry.Descrip
+
+			if strings.Contains(descrip, "enterNewRound") {
+				hrs := strings.Split(descrip, " ")[2]
+				hrsArr := strings.Split(hrs, "/")
+
+				status.Height, err = strconv.Atoi(hrsArr[0])
+				if err != nil {
+					return status, err
+				}
+				status.Round, err = strconv.Atoi(hrsArr[1])
+				if err != nil {
+					return status, err
+				}
+				//set new round and reset parameters
+				status.Step = "NewRound"
+				fmt.Println("ENTER NEW ROUND!")
+				fmt.Println(ln)
+
+				status.Proposal = "No"
+
+				status.BlockParts = status.BlockParts[:0]
+				bpUnique = true
+
+				status.PreVotes = status.PreVotes[:0]
+				pvUnique = true
+
+				status.PreCommits = status.PreCommits[:0]
+				pcUnique = true
+
+				for i := 0; i < intVals; i++ {
+					status.PreVotes = append(status.PreVotes, "_")
+					status.PreCommits = append(status.PreCommits, "_")
+				}
+
+			} else if strings.Contains(descrip, "enterPropose") {
+				status.Step = "Propose"
+				fmt.Println("ENTER PROPOSE!")
+				fmt.Println(ln)
+
+			} else if strings.Contains(descrip, "enterPrevote") {
+				status.Step = "Prevote"
+				fmt.Println("ENTER PREVOTE!")
+				fmt.Println(ln)
+
+			} else if strings.Contains(descrip, "enterPrecommit") {
+				status.Step = "Precommit"
+				fmt.Println("ENTER PRECOMMIT!")
+				fmt.Println(ln)
+
+			} else if strings.Contains(descrip, "enterCommit") {
+				status.Step = "Commit"
+				fmt.Println("ENTER COMMIT!")
+				fmt.Println(ln)
+
+			}
+		}
+		//check for proposal
+		if entry.Descrip == "Received complete proposal block" {
+			height, err := strconv.Atoi(entry.Other["height"])
+			if err != nil {
+				return status, err
+			}
+			if height == status.Height {
+				status.Proposal = "yes"
+				fmt.Println("PROP!")
+				fmt.Println(ln)
+			}
+		} else if entry.Descrip == "Signed proposal" {
+			status.Proposal = "yes"
+			fmt.Println("PROP from me!")
+			fmt.Println(ln)
+		}
+		//check for block parts
+		if entry.Descrip == "Receive" && strings.Contains(entry.Other["msg"], "BlockPart") {
+			blockPart := entry.Other["msg"]
+
+			for _, part := range bpArr {
+				if part == blockPart {
+					bpUnique = false
+					break
+				} else {
+					bpUnique = true
+				}
+			}
+
+			if bpUnique == true {
+				bpArr = append(bpArr, blockPart)
+				status.BlockParts = append(status.BlockParts, "X")
+				fmt.Println("UNIQUE BP!")
+				fmt.Println(ln)
+
+			}
+		}
+		//check for votes from unique validators, and add new validators to validator set
+		if entry.Descrip == "Receive" && strings.Contains(entry.Other["msg"], "Vote Vote") {
+			vote := entry.Other["msg"]
+
+			if strings.Contains(vote, "Prevote") {
+				for _, pv := range pvArr {
+					if pv == vote {
+						pvUnique = false
+						break
+					} else {
+						pvUnique = true
+					}
+				}
+
+				if pvUnique == true {
+					pvArr = append(pvArr, vote)
+
+					temp := strings.Split(vote, "{")[1]
+					i, err := strconv.Atoi(strings.Split(temp, ":")[0])
+					if err != nil {
+						return status, err
+					}
+					fmt.Println("UNIQUE PV!")
+					fmt.Println(ln)
+
+					status.PreVotes[i] = "X"
+				}
+			}
+
+			if strings.Contains(vote, "Precommit") {
+				for _, pc := range pcArr {
+					if pc == vote {
+						pcUnique = false
+						break
+					} else {
+						pcUnique = true
+					}
+				}
+
+				if pcUnique == true {
+					pcArr = append(pcArr, vote)
+
+					temp := strings.Split(vote, "{")[1]
+					i, err := strconv.Atoi(strings.Split(temp, ":")[0])
+					if err != nil {
+						return status, err
+					}
+					fmt.Println("UNIQUE PC!")
+					fmt.Println(ln)
+
+					status.PreCommits[i] = "X"
+				}
+			}
+		}
+		//check for own vote
+		if entry.Descrip == "Signed and pushed vote" {
+			if status.Step == "Prevote" {
+				status.PreVotes[myNode] = "X"
+			} else if status.Step == "Precommit" {
+				status.PreCommits[myNode] = "X"
+			}
+		}
+	}
+
+	return status, err
+}
+
 func main() {
 
 	args := os.Args
-	fmt.Println(args)
 
 	logName := args[1]
 	jsonName := args[2]
@@ -225,7 +440,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	jsonLog, err := InitJSON(jsonName)
+	blankJsonLog, err := InitJSON(jsonName)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -237,9 +452,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	err = MarshalJSON(entries, jsonLog)
+	err = MarshalJSON(entries, blankJsonLog)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	status, err := getStatus(entries)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(status)
 
 }
