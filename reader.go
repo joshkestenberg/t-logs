@@ -4,14 +4,11 @@ import (
 	"C"
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"strconv"
 	"strings"
 )
-import "errors"
 
 //LogEntry defines params for eventual json
 type LogEntry struct {
@@ -50,7 +47,9 @@ func InitJSON(filename string) (*os.File, error) {
 }
 
 //RenderDoc removes blocks and spaces to prep doc for parse
-func RenderDoc(file *os.File) (*os.File, error) {
+//This has been modified for web purposes..
+func RenderDoc(file *os.File, endLn int) (*os.File, error) {
+	count := 1
 	var err error
 
 	fileStat, err := file.Stat()
@@ -74,11 +73,16 @@ func RenderDoc(file *os.File) (*os.File, error) {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		str := scanner.Text()
-		if strings.Contains(str, `|`) {
-			_, err = renderFile.WriteString(str + "\n")
-			if err != nil {
-				return nil, err
+		if count <= endLn {
+			if strings.Contains(str, `|`) {
+				_, err = renderFile.WriteString(str + "\n")
+				if err != nil {
+					return nil, err
+				}
 			}
+			count++
+		} else {
+			break
 		}
 	}
 
@@ -260,94 +264,7 @@ func getStatus(entries []LogEntry) (Status, error) {
 	return status, err
 }
 
-func getMessages(entries []LogEntry, dur int) error {
-	var trackTime int
-	var err error
-
-	if dur < 2 || dur > 59999 {
-		return errors.New("duration must be greater than 2 and lesser than 59999")
-	}
-
-	first := true
-
-	peers := findPeers(entries)
-
-	var msgs []string
-
-	for i := 0; i < len(peers); i++ {
-		msgs = append(msgs, "_")
-	}
-
-	for _, entry := range entries {
-
-		tParse := strings.Split(entry.Time, ":")
-		timeParse := strings.Split(tParse[2], ".")
-		mili := timeParse[0] + timeParse[1]
-
-		time, err := strconv.Atoi(mili)
-		if err != nil {
-			return err
-		}
-
-		if first == true {
-			trackTime = time
-			first = false
-		}
-
-		if time > trackTime && (time-trackTime) >= dur {
-			fmt.Println(entry.Time, msgs)
-			//update trackTime
-			trackTime = time
-			//reset peers
-			for i := 0; i < len(peers); i++ {
-				msgs[i] = "_"
-			}
-		} else if time < trackTime && (60000-trackTime+time) >= dur {
-			fmt.Println(entry.Time, msgs)
-			//update trackTime
-			trackTime = time
-			//reset peers
-			for i := 0; i < len(peers); i++ {
-				msgs[i] = "_"
-			}
-		}
-
-		//processing logic for received msgs
-		if entry.Descrip == "Receive" {
-			for i, peer := range peers {
-				if entry.Other["src"] == peer {
-					msgs[i] = "X"
-				}
-			}
-		}
-	}
-	return err
-}
-
 //ALL BELOW FUNCTIONS BELONG TO getStatus ^
-
-//except this belongs to getMessages
-func findPeers(entries []LogEntry) []string {
-	var peers []string
-	var add bool
-
-	for _, entry := range entries {
-		add = true
-		if entry.Descrip == "Receive" {
-			for _, peer := range peers {
-				if peer == entry.Other["src"] {
-					add = false
-				}
-			}
-			if add == true {
-				peers = append(peers, entry.Other["src"])
-			}
-		}
-	}
-	return peers
-}
-
-//**************************** henceforth...
 
 //find number of validators
 func findNumVals(entry LogEntry, numVals int) (int, error) {
@@ -572,34 +489,4 @@ func myVote(status Status, entry LogEntry, myNode int) (Status, error) {
 		}
 	}
 	return status, err
-}
-
-//*****************************************************************************
-
-func main() {
-
-	args := os.Args
-
-	logName := args[1]
-	dur, err := strconv.Atoi(args[2])
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	file, err := OpenLog(logName)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	renderFile, err := RenderDoc(file)
-
-	entries, err := UnmarshalLines(renderFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = getMessages(entries, dur)
-	if err != nil {
-		log.Fatal(err)
-	}
 }
