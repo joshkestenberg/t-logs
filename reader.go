@@ -1,7 +1,6 @@
 package main
 
 import (
-	"C"
 	"bufio"
 	"encoding/json"
 	"fmt"
@@ -224,10 +223,6 @@ func getStatus(entries []LogEntry) (Status, error) {
 	var pvArr []string
 	var pcArr []string
 
-	bpUnique := true
-	pvUnique := true
-	pcUnique := true
-
 	var numVals int
 	var myNode int
 
@@ -235,39 +230,53 @@ func getStatus(entries []LogEntry) (Status, error) {
 
 	for _, entry := range entries {
 
-		numVals, err = findNumVals(entry, numVals)
-		if err != nil {
-			return status, err
+		if _, ok := entry.Other["localPV"]; ok {
+			numVals, err = findNumVals(entry)
+			if err != nil {
+				return status, err
+			}
 		}
 
-		myNode, err = findMyNode(entry)
-		if err != nil {
-			return status, err
+		if entry.Descrip == "Signed and pushed vote" {
+			myNode, err = findMyNode(entry)
+			if err != nil {
+				return status, err
+			}
 		}
 
-		status, bpUnique, pvUnique, pcUnique, err = newRound(status, entry, bpUnique, pvUnique, pcUnique, numVals)
-		if err != nil {
-			return status, err
+		if strings.Contains(entry.Descrip, "enter") && !strings.Contains(entry.Descrip, "Invalid") {
+			status, err = newStep(status, entry, numVals)
+			if err != nil {
+				return status, err
+			}
 		}
 
-		status, err = checkProp(status, entry)
-		if err != nil {
-			return status, err
+		if entry.Descrip == "Received complete proposal block" {
+			status, err = checkProp(status, entry)
+			if err != nil {
+				return status, err
+			}
 		}
 
-		status, bpUnique, bpArr, err = checkBlock(status, entry, bpUnique, bpArr)
-		if err != nil {
-			return status, err
+		if entry.Descrip == "Receive" && strings.Contains(entry.Other["msg"], "BlockPart") {
+			status, bpArr, err = checkBlock(status, entry, bpArr)
+			if err != nil {
+				return status, err
+			}
 		}
 
-		status, pvUnique, pvArr, pcUnique, pcArr, err = checkVotes(status, entry, pvUnique, pvArr, pcUnique, pcArr)
-		if err != nil {
-			return status, err
+		if entry.Descrip == "Receive" && strings.Contains(entry.Other["msg"], "Vote Vote") {
+			status, pvArr, pcArr, err = checkVotes(status, entry, pvArr, pcArr)
+			if err != nil {
+				return status, err
+			}
 		}
 
-		status, err = myVote(status, entry, myNode)
-		if err != nil {
-			return status, err
+		if entry.Descrip == "Signed and pushed vote" {
+			status, err = myVote(status, entry, myNode)
+			if err != nil {
+				return status, err
+			}
 		}
 	}
 	return status, err
@@ -276,17 +285,16 @@ func getStatus(entries []LogEntry) (Status, error) {
 //ALL BELOW FUNCTIONS BELONG TO getStatus ^
 
 //find number of validators
-func findNumVals(entry LogEntry, numVals int) (int, error) {
+func findNumVals(entry LogEntry) (int, error) {
 	var err error
 
-	if val, ok := entry.Other["localPV"]; ok {
-		vals := strings.Split(val, "{")[1]
-		stringVals := strings.Split(vals, ":")[0]
-		numVals, err = strconv.Atoi(stringVals)
-		if err != nil {
-			return numVals, err
-		}
+	vals := strings.Split(entry.Other["localPV"], "{")[1]
+	stringVals := strings.Split(vals, ":")[0]
+	numVals, err := strconv.Atoi(stringVals)
+	if err != nil {
+		return numVals, err
 	}
+
 	return numVals, err
 }
 
@@ -295,207 +303,193 @@ func findMyNode(entry LogEntry) (int, error) {
 	var err error
 	var i int
 
-	if entry.Descrip == "Signed and pushed vote" {
-		vote := entry.Other["vote"]
+	vote := entry.Other["vote"]
 
-		temp := strings.Split(vote, "{")[1]
-		i, err = strconv.Atoi(strings.Split(temp, ":")[0])
-		if err != nil {
-			return i, err
-		}
+	temp := strings.Split(vote, "{")[1]
+	i, err = strconv.Atoi(strings.Split(temp, ":")[0])
+	if err != nil {
+		return i, err
 	}
 	return i, err
 }
 
 //check for new round; set HRS, and reset votes if new round
-func newRound(status Status, entry LogEntry, bpUnique bool, pvUnique bool, pcUnique bool, numVals int) (Status, bool, bool, bool, error) {
+func newStep(status Status, entry LogEntry, numVals int) (Status, error) {
 	var err error
 
-	if strings.Contains(entry.Descrip, "enter") && !strings.Contains(entry.Descrip, "Invalid") {
-		descrip := entry.Descrip
+	descrip := entry.Descrip
 
-		if strings.Contains(descrip, "enterNewRound") {
-			hrs := strings.Split(descrip, " ")[2]
-			hrsArr := strings.Split(hrs, "/")
+	if strings.Contains(descrip, "enterNewRound") {
+		hrs := strings.Split(descrip, " ")[2]
+		hrsArr := strings.Split(hrs, "/")
 
-			status.Height, err = strconv.Atoi(hrsArr[0])
-			if err != nil {
-				return status, bpUnique, pvUnique, pcUnique, err
-			}
-			status.Round, err = strconv.Atoi(hrsArr[1])
-			if err != nil {
-				return status, bpUnique, pvUnique, pcUnique, err
-			}
-			//set new round and reset parameters
-			status.Step = "NewRound"
-
-			status.Proposal = "No"
-
-			status.BlockParts = status.BlockParts[:0]
-			bpUnique = true
-
-			status.PreVotes = status.PreVotes[:0]
-			pvUnique = true
-
-			status.PreCommits = status.PreCommits[:0]
-			pcUnique = true
-
-			for i := 0; i < numVals; i++ {
-				status.PreVotes = append(status.PreVotes, "_")
-				status.PreCommits = append(status.PreCommits, "_")
-			}
-
-		} else if strings.Contains(descrip, "enterPropose") {
-			status.Step = "Propose"
-
-		} else if strings.Contains(descrip, "enterPrevote") {
-			status.Step = "Prevote"
-		} else if strings.Contains(descrip, "enterPrecommit") {
-			status.Step = "Precommit"
-
-		} else if strings.Contains(descrip, "enterCommit") {
-			status.Step = "Commit"
+		status.Height, err = strconv.Atoi(hrsArr[0])
+		if err != nil {
+			return status, err
 		}
+		status.Round, err = strconv.Atoi(hrsArr[1])
+		if err != nil {
+			return status, err
+		}
+		//set new round and reset parameters
+		status.Step = "NewRound"
+
+		status.Proposal = "No"
+
+		status.BlockParts = status.BlockParts[:0]
+
+		status.PreVotes = status.PreVotes[:0]
+
+		status.PreCommits = status.PreCommits[:0]
+
+		for i := 0; i < numVals; i++ {
+			status.PreVotes = append(status.PreVotes, "_")
+			status.PreCommits = append(status.PreCommits, "_")
+		}
+
+	} else if strings.Contains(descrip, "enterPropose") {
+		status.Step = "Propose"
+
+	} else if strings.Contains(descrip, "enterPrevote") {
+		status.Step = "Prevote"
+	} else if strings.Contains(descrip, "enterPrecommit") {
+		status.Step = "Precommit"
+
+	} else if strings.Contains(descrip, "enterCommit") {
+		status.Step = "Commit"
 	}
-	return status, bpUnique, pvUnique, pcUnique, err
+	return status, err
 }
 
 //check for proposal
 func checkProp(status Status, entry LogEntry) (Status, error) {
 	var err error
 
-	if entry.Descrip == "Received complete proposal block" {
-		height, err := strconv.Atoi(entry.Other["height"])
-		if err != nil {
-			return status, err
-		}
-		if height == status.Height {
-			status.Proposal = "yes"
-		}
-	} else if entry.Descrip == "Signed proposal" {
+	height, err := strconv.Atoi(entry.Other["height"])
+
+	if err != nil {
+		return status, err
+	}
+	if height == status.Height {
 		status.Proposal = "yes"
 	}
+
 	return status, err
 }
 
 //check for block parts
-func checkBlock(status Status, entry LogEntry, bpUnique bool, bpArr []string) (Status, bool, []string, error) {
+func checkBlock(status Status, entry LogEntry, bpArr []string) (Status, []string, error) {
 	var err error
+	bpUnique := true
+	blockPart := entry.Other["msg"]
 
-	if entry.Descrip == "Receive" && strings.Contains(entry.Other["msg"], "BlockPart") {
-		blockPart := entry.Other["msg"]
-
-		for _, part := range bpArr {
-			if part == blockPart {
-				bpUnique = false
-				break
-			} else {
-				bpUnique = true
-			}
-		}
-
-		if bpUnique == true {
-			bpArr = append(bpArr, blockPart)
-			status.BlockParts = append(status.BlockParts, "X")
+	for _, part := range bpArr {
+		if part == blockPart {
+			bpUnique = false
+			break
 		}
 	}
-	return status, bpUnique, bpArr, err
+
+	if bpUnique == true {
+		bpArr = append(bpArr, blockPart)
+		status.BlockParts = append(status.BlockParts, "X")
+	}
+	return status, bpArr, err
 }
 
 //add unique votes from validators
-func checkVotes(status Status, entry LogEntry, pvUnique bool, pvArr []string, pcUnique bool, pcArr []string) (Status, bool, []string, bool, []string, error) {
+func checkVotes(status Status, entry LogEntry, pvArr []string, pcArr []string) (Status, []string, []string, error) {
 	var err error
 
-	if entry.Descrip == "Receive" && strings.Contains(entry.Other["msg"], "Vote Vote") {
-		vote := entry.Other["msg"]
+	pvUnique := true
+	pcUnique := true
 
-		if strings.Contains(vote, "Prevote") {
-			for _, pv := range pvArr {
-				if pv == vote {
-					pvUnique = false
-					break
-				} else {
-					pvUnique = true
-				}
-			}
+	vote := entry.Other["msg"]
 
-			if pvUnique == true {
-				pvArr = append(pvArr, vote)
-
-				temp := strings.Split(vote, "{")[1]
-				i, err := strconv.Atoi(strings.Split(temp, ":")[0])
-				if err != nil {
-					return status, pvUnique, pvArr, pcUnique, pcArr, err
-				}
-
-				heightStr := strings.Split(strings.Split(vote, "/")[0], " ")[2]
-				roundStr := strings.Split(vote, "/")[1]
-
-				height, err := strconv.Atoi(heightStr)
-				if err != nil {
-					return status, pvUnique, pvArr, pcUnique, pcArr, err
-				}
-				round, err := strconv.Atoi(roundStr)
-				if err != nil {
-					return status, pvUnique, pvArr, pcUnique, pcArr, err
-				}
-
-				if height == status.Height && round == status.Round {
-					status.PreVotes[i] = "X"
-				}
+	if strings.Contains(vote, "Prevote") {
+		for _, pv := range pvArr {
+			if pv == vote {
+				pvUnique = false
+				break
+			} else {
+				pvUnique = true
 			}
 		}
 
-		if strings.Contains(vote, "Precommit") {
-			for _, pc := range pcArr {
-				if pc == vote {
-					pcUnique = false
-					break
-				} else {
-					pcUnique = true
-				}
+		if pvUnique == true {
+			pvArr = append(pvArr, vote)
+
+			temp := strings.Split(vote, "{")[1]
+			i, err := strconv.Atoi(strings.Split(temp, ":")[0])
+			if err != nil {
+				return status, pvArr, pcArr, err
 			}
 
-			if pcUnique == true {
-				pcArr = append(pcArr, vote)
+			heightStr := strings.Split(strings.Split(vote, "/")[0], " ")[2]
+			roundStr := strings.Split(vote, "/")[1]
 
-				temp := strings.Split(vote, "{")[1]
-				i, err := strconv.Atoi(strings.Split(temp, ":")[0])
-				if err != nil {
-					return status, pvUnique, pvArr, pcUnique, pcArr, err
-				}
+			height, err := strconv.Atoi(heightStr)
+			if err != nil {
+				return status, pvArr, pcArr, err
+			}
+			round, err := strconv.Atoi(roundStr)
+			if err != nil {
+				return status, pvArr, pcArr, err
+			}
 
-				heightStr := strings.Split(strings.Split(vote, "/")[0], " ")[2]
-				roundStr := strings.Split(vote, "/")[1]
-
-				height, err := strconv.Atoi(heightStr)
-				if err != nil {
-					return status, pvUnique, pvArr, pcUnique, pcArr, err
-				}
-				round, err := strconv.Atoi(roundStr)
-				if err != nil {
-					return status, pvUnique, pvArr, pcUnique, pcArr, err
-				}
-
-				if height == status.Height && round == status.Round {
-					status.PreCommits[i] = "X"
-				}
+			if height == status.Height && round == status.Round {
+				status.PreVotes[i] = "X"
 			}
 		}
 	}
-	return status, pvUnique, pvArr, pcUnique, pcArr, err
+
+	if strings.Contains(vote, "Precommit") {
+		for _, pc := range pcArr {
+			if pc == vote {
+				pcUnique = false
+				break
+			} else {
+				pcUnique = true
+			}
+		}
+
+		if pcUnique == true {
+			pcArr = append(pcArr, vote)
+
+			temp := strings.Split(vote, "{")[1]
+			i, err := strconv.Atoi(strings.Split(temp, ":")[0])
+			if err != nil {
+				return status, pvArr, pcArr, err
+			}
+
+			heightStr := strings.Split(strings.Split(vote, "/")[0], " ")[2]
+			roundStr := strings.Split(vote, "/")[1]
+
+			height, err := strconv.Atoi(heightStr)
+			if err != nil {
+				return status, pvArr, pcArr, err
+			}
+			round, err := strconv.Atoi(roundStr)
+			if err != nil {
+				return status, pvArr, pcArr, err
+			}
+
+			if height == status.Height && round == status.Round {
+				status.PreCommits[i] = "X"
+			}
+		}
+	}
+	return status, pvArr, pcArr, err
 }
 
 //check for own vote
 func myVote(status Status, entry LogEntry, myNode int) (Status, error) {
 	var err error
 
-	if entry.Descrip == "Signed and pushed vote" {
-		if status.Step == "Prevote" {
-			status.PreVotes[myNode] = "X"
-		} else if status.Step == "Precommit" {
-			status.PreCommits[myNode] = "X"
-		}
+	if status.Step == "Prevote" {
+		status.PreVotes[myNode] = "X"
+	} else if status.Step == "Precommit" {
+		status.PreCommits[myNode] = "X"
 	}
 	return status, err
 }
