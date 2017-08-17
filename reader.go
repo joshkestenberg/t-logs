@@ -2,14 +2,15 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 )
-import "errors"
 
 //LogEntry defines params for eventual json
 type LogEntry struct {
@@ -37,8 +38,9 @@ func OpenLog(filepath string) (*os.File, error) {
 }
 
 //RenderDoc removes blocks and spaces to prep doc for parse
-func RenderDoc(file *os.File) (*os.File, error) {
+func RenderDoc(file *os.File, stLn int, endLn int) (*os.File, error) {
 	var err error
+	var count int
 
 	fileStat, err := file.Stat()
 	if err != nil {
@@ -60,6 +62,14 @@ func RenderDoc(file *os.File) (*os.File, error) {
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
+		//start and end line logic
+		count += 1
+		if count < stLn {
+			continue
+		} else if count > endLn {
+			break
+		}
+
 		str := scanner.Text()
 		if strings.Contains(str, `|`) {
 			_, err = renderFile.WriteString(str + "\n")
@@ -169,17 +179,19 @@ func UnmarshalLines(file *os.File) ([]LogEntry, error) {
 	return entries, err
 }
 
-func getMessages(entries []LogEntry, dur int) error {
+func getMessages(entries []LogEntry, peerFilename string, dur int) error {
 	var trackTime int
+	var prevMinute int
 	var err error
-
-	if dur < 2 || dur > 59999 {
-		return errors.New("duration must be greater than 2 and lesser than 59999")
-	}
 
 	first := true
 
-	peers := findPeers(entries)
+	peers, err := findPeers(peerFilename)
+	if err != nil {
+		return err
+	}
+
+	myIp := findMyIP(entries)
 
 	var msgs []string
 
@@ -193,6 +205,10 @@ func getMessages(entries []LogEntry, dur int) error {
 		timeParse := strings.Split(tParse[2], ".")
 		mili := timeParse[0] + timeParse[1]
 
+		minute, err := strconv.Atoi(tParse[1])
+		if err != nil {
+			return err
+		}
 		time, err := strconv.Atoi(mili)
 		if err != nil {
 			return err
@@ -200,31 +216,59 @@ func getMessages(entries []LogEntry, dur int) error {
 
 		if first == true {
 			trackTime = time
+			prevMinute = minute
 			first = false
 		}
 
 		if time > trackTime && (time-trackTime) >= dur {
 			fmt.Println(entry.Time, msgs)
-			//update trackTime
+			//update trackTime and prevMinute
 			trackTime = time
+			prevMinute = minute
 			//reset peers
 			for i := 0; i < len(peers); i++ {
 				msgs[i] = "_"
 			}
 		} else if time < trackTime && (60000-trackTime+time) >= dur {
 			fmt.Println(entry.Time, msgs)
-			//update trackTime
+			//update trackTime and prevMinute
 			trackTime = time
+			prevMinute = minute
 			//reset peers
 			for i := 0; i < len(peers); i++ {
 				msgs[i] = "_"
 			}
+		} else if minute == (prevMinute+1) && time > trackTime {
+			fmt.Println(entry.Time, msgs)
+			//update trackTime and prevMinute
+			trackTime = time
+			prevMinute = minute
+			//reset peers
+			for i := 0; i < len(peers); i++ {
+				msgs[i] = "_"
+			}
+		} else if minute >= (prevMinute + 2) {
+			fmt.Println(entry.Time, msgs)
+			//update trackTime and prevMinute
+			trackTime = time
+			prevMinute = minute
+			//reset peers
+			for i := 0; i < len(peers); i++ {
+				msgs[i] = "_"
+			}
+		} else if reflect.DeepEqual(entry, entries[len(entries)-1]) {
+			fmt.Println(entry.Time, msgs)
 		}
 
 		//processing logic for received msgs
 		if entry.Descrip == "Receive" {
+			peerParse := strings.Split(entry.Other["src"], "}")[0]
+			ip := strings.Split(peerParse, "{")[2]
+
 			for i, peer := range peers {
-				if entry.Other["src"] == peer {
+				if myIp == peer {
+					msgs[i] = "O"
+				} else if ip == peer {
 					msgs[i] = "X"
 				}
 			}
@@ -233,8 +277,25 @@ func getMessages(entries []LogEntry, dur int) error {
 	return err
 }
 
-//this belongs to getMessages
-func findPeers(entries []LogEntry) []string {
+//these belong to getMessages
+func findPeers(peerFilename string) ([]string, error) {
+	var peers []string
+
+	file, err := OpenLog(peerFilename)
+	if err != nil {
+		return peers, err
+	}
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		str := scanner.Text()
+		peers = append(peers, str)
+	}
+	return peers, err
+}
+
+//This is just utilitarian script to get a list of ip's from the log file
+func findIpsFromLog(entries []LogEntry) {
 	var peers []string
 	var add bool
 
@@ -242,7 +303,7 @@ func findPeers(entries []LogEntry) []string {
 		add = true
 		if entry.Descrip == "Receive" {
 			for _, peer := range peers {
-				if peer == entry.Other["src"] {
+				if entry.Other["src"] == peer {
 					add = false
 				}
 			}
@@ -251,17 +312,40 @@ func findPeers(entries []LogEntry) []string {
 			}
 		}
 	}
-	return peers
+
+	fmt.Println(peers)
+}
+
+func findMyIP(entries []LogEntry) string {
+	var ip string
+
+	for _, entry := range entries {
+		if entry.Descrip == "Starting DefaultListener" {
+			ipParse := strings.Split(entry.Other["impl"], "@")[1]
+			ip = strings.Replace(ipParse, ")", "", 1)
+			break
+		}
+	}
+	return ip
 }
 
 //********************************************************************
 
 func main() {
-
+	//set up vars from args
 	args := os.Args
 
 	logName := args[1]
-	dur, err := strconv.Atoi(args[2])
+	peerFilename := args[2]
+	stLn, err := strconv.Atoi(args[3])
+	if err != nil {
+		log.Fatal(err)
+	}
+	endLn, err := strconv.Atoi(args[4])
+	if err != nil {
+		log.Fatal(err)
+	}
+	dur, err := strconv.Atoi(args[5])
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -271,14 +355,24 @@ func main() {
 		log.Fatal(err)
 	}
 
-	renderFile, err := RenderDoc(file)
+	//make sure user input is valid
+	if stLn <= 0 || endLn < stLn {
+		log.Fatal(errors.New("make sure start line is greater than zero, and lesser than end line"))
+	} else if dur < 2 || dur > 59999 {
+		log.Fatal(errors.New("duration must be greater than 2 and lesser than 59999"))
+	}
+
+	renderFile, err := RenderDoc(file, stLn, endLn)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	entries, err := UnmarshalLines(renderFile)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = getMessages(entries, dur)
+	err = getMessages(entries, peerFilename, dur)
 	if err != nil {
 		log.Fatal(err)
 	}
