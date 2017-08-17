@@ -182,6 +182,9 @@ func UnmarshalLines(file *os.File) ([]LogEntry, error) {
 func getMessages(entries []LogEntry, peerFilename string, dur int) error {
 	var trackTime int
 	var prevMinute int
+	var prevHour int
+	var prevMonth int
+	var prevDay int
 	var err error
 
 	first := true
@@ -209,6 +212,21 @@ func getMessages(entries []LogEntry, peerFilename string, dur int) error {
 		if err != nil {
 			return err
 		}
+		hour, err := strconv.Atoi(tParse[0])
+		if err != nil {
+			return err
+		}
+
+		dateParse := strings.Split(entry.Date, "-")
+		month, err := strconv.Atoi(dateParse[0])
+		if err != nil {
+			return err
+		}
+		day, err := strconv.Atoi(dateParse[1])
+		if err != nil {
+			return err
+		}
+
 		time, err := strconv.Atoi(mili)
 		if err != nil {
 			return err
@@ -220,16 +238,58 @@ func getMessages(entries []LogEntry, peerFilename string, dur int) error {
 			first = false
 		}
 
-		if (time > trackTime && (time-trackTime) >= dur) || (time < trackTime && (60000-trackTime+time) >= dur) || (minute == (prevMinute+1) && time > trackTime) || (minute >= (prevMinute + 2)) {
+		//this if/else statement determines when to return a statement, accounting for the turnover of minutes, hours, days, months, years
+		if (time > trackTime && (time-trackTime) >= dur) || (time < trackTime && (60000-trackTime+time) >= dur) { //duration elapses normally
 			fmt.Println(entry.Time, msgs)
-			//update trackTime and prevMinute
+			//update trackers
+			trackTime = time
+			//reset peers
+			for i := 0; i < len(peers); i++ {
+				msgs[i] = "_"
+			}
+		} else if (minute == (prevMinute+1) && time > trackTime) || minute >= (prevMinute+2) { //minute rolls over
+			fmt.Println(entry.Time, msgs)
+			//update trackers
 			trackTime = time
 			prevMinute = minute
 			//reset peers
 			for i := 0; i < len(peers); i++ {
 				msgs[i] = "_"
 			}
-		} else if reflect.DeepEqual(entry, entries[len(entries)-1]) {
+		} else if hour == (prevHour+1) && ((60000-trackTime+time) >= dur || time > trackTime) { //hour rolls over
+			fmt.Println(entry.Time, msgs)
+			//update trackers
+			trackTime = time
+			prevMinute = minute
+			prevHour = hour
+			//reset peers
+			for i := 0; i < len(peers); i++ {
+				msgs[i] = "_"
+			}
+		} else if day == (prevDay+1) && ((60000-trackTime+time) >= dur || time > trackTime) { //day rolls over
+			fmt.Println(entry.Time, msgs)
+			//update trackers
+			trackTime = time
+			prevMinute = minute
+			prevHour = hour
+			prevDay = day
+			//reset peers
+			for i := 0; i < len(peers); i++ {
+				msgs[i] = "_"
+			}
+		} else if (month == (prevMonth+1) || month < prevMonth) && ((60000-trackTime+time) >= dur || time > trackTime) { //month rolls over
+			fmt.Println(entry.Time, msgs)
+			//update trackers
+			trackTime = time
+			prevMinute = minute
+			prevHour = hour
+			prevDay = day
+			prevMonth = month
+			//reset peers
+			for i := 0; i < len(peers); i++ {
+				msgs[i] = "_"
+			}
+		} else if reflect.DeepEqual(entry, entries[len(entries)-1]) { //log ends
 			fmt.Println(entry.Time, msgs)
 		}
 
