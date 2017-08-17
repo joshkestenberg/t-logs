@@ -220,34 +220,7 @@ func getMessages(entries []LogEntry, peerFilename string, dur int) error {
 			first = false
 		}
 
-		if time > trackTime && (time-trackTime) >= dur {
-			fmt.Println(entry.Time, msgs)
-			//update trackTime and prevMinute
-			trackTime = time
-			prevMinute = minute
-			//reset peers
-			for i := 0; i < len(peers); i++ {
-				msgs[i] = "_"
-			}
-		} else if time < trackTime && (60000-trackTime+time) >= dur {
-			fmt.Println(entry.Time, msgs)
-			//update trackTime and prevMinute
-			trackTime = time
-			prevMinute = minute
-			//reset peers
-			for i := 0; i < len(peers); i++ {
-				msgs[i] = "_"
-			}
-		} else if minute == (prevMinute+1) && time > trackTime {
-			fmt.Println(entry.Time, msgs)
-			//update trackTime and prevMinute
-			trackTime = time
-			prevMinute = minute
-			//reset peers
-			for i := 0; i < len(peers); i++ {
-				msgs[i] = "_"
-			}
-		} else if minute >= (prevMinute + 2) {
+		if (time > trackTime && (time-trackTime) >= dur) || (time < trackTime && (60000-trackTime+time) >= dur) || (minute == (prevMinute+1) && time > trackTime) || (minute >= (prevMinute + 2)) {
 			fmt.Println(entry.Time, msgs)
 			//update trackTime and prevMinute
 			trackTime = time
