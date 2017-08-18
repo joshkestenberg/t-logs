@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="resources/styles.css" type="text/css"/>
+    <title>Tendermint Log Parser</title>
+  </head>
+  <body>
+    <div class="header">
+      <h1>Upload</h1>
+    </div>
+    <div class="descrip">
+      <p>Upload your log file and enter the line number at which you which to inquire about the state of the node.<p>
+    </div>
+    <form enctype='multipart/form-data' action='/data' method='POST'>
+      <input type='file' name='upload'><br><input type='number' name='line' placeholder='line number'>
+      <input type='submit'>
+    </form>
+  </body>
+</html>

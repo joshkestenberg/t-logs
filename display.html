@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="resources/styles.css" type="text/css"/>
+    <title>Tendermint Log Parser</title>
+  </head>
+  <body>
+    <html>
+    <div class="header">
+      <h1>Node Status</h1>
+    </div>
+
+    <table>
+      <tr>
+        <th>Height</th>
+        <th>Round</th>
+        <th>Step</th>
+        <th>Proposal</th>
+        <th>Block Parts</th>
+        <th>Prevotes</th>
+        <th>Precommits</th>
+      </tr>
+      <tr>
+        <td>{{.Height}}</td>
+        <td>{{.Round}}</td>
+        <td>{{.Step}}</td>
+        <td>{{.Proposal}}</td>
+        <td>{{.BlockParts}}</td>
+        <td>{{.PreVotes}}</td>
+        <td>{{.PreCommits}}</td>
+      </tr>
+    </table>
+  </body>
+</html>

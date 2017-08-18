@@ -205,8 +205,8 @@ func MarshalJSON(entries []LogEntry, jsonLog *os.File) error {
 	return err
 }
 
-//get status parses log entries for relevant data (see below for all relevant fucntions)
-func getStatus(entries []LogEntry) (Status, error) {
+//getStatus parses log entries for relevant data (see below for all relevant fucntions)
+func GetStatus(entries []LogEntry) (Status, error) {
 	var err error
 
 	var status Status
