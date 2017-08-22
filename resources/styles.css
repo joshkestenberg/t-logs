@@ -1,3 +1,7 @@
+body {
+    font-family: sans-serif;
+    margin: 0px;
+}
 table, th, td {
     border: 1px solid black;
     text-align:center;
@@ -5,4 +9,44 @@ table, th, td {
 
 th, td {
     width:10%
+}
+
+.header{
+    background-color:rgba(14,46,78,.95);
+    color: white;
+    margin: 0px;
+    height: 49px;
+}
+
+h1 {
+    margin: 0px;
+    padding-left: 10px;
+    font-size: 30px;
+    position: absolute;
+    top: 10px;
+    left: 50px;
+}
+
+body>*{
+    margin-left: 13px;
+}
+
+img {
+    height: 49px;
+}
+
+table {
+  margin-top: 20px;
+  margin-bottom: 20px;
+}
+
+#back {
+  text-decoration: none;
+  font-weight: bold;
+  font-size: 20px;
+  color:rgba(14,46,78,.95);
+}
+
+#back:hover{
+  color: rgb(50, 194, 44);
 }
