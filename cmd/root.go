@@ -18,8 +18,8 @@ func init() {
 var RootCmd = &cobra.Command{
 	Use:   "t-logs",
 	Short: "T-logs is a Tendermint debugging tool",
-	Long: `T-logs is the root command, and will, from a given Tendermint log file, render a parseable log file with all parser-unfriendly lines removed.
-  Requires flag: log file path`,
+	Long: `T-logs is the root command, and will, from a given Tendermint log file (must be a verbose log to use msgs or peers accurately), render a parseable log file with all parser-unfriendly lines removed.
+  Requires flag: --log (file path)`,
 }
 
 func Parse() []reader.LogEntry {

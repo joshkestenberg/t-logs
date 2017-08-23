@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"reflect"
 	"strconv"
@@ -47,6 +48,10 @@ func RenderDoc(file *os.File) (*os.File, error) {
 	name := fileStat.Name()
 	renderName := "rendered_" + name
 
+	if _, err := os.Stat("./" + renderName); err == nil {
+		return os.OpenFile(renderName, os.O_RDWR|os.O_APPEND, 0600)
+	}
+
 	err = ioutil.WriteFile(renderName, nil, 0600)
 	if err != nil {
 		return nil, err
@@ -61,6 +66,9 @@ func RenderDoc(file *os.File) (*os.File, error) {
 	for scanner.Scan() {
 		str := scanner.Text()
 		if strings.Contains(str, `|`) {
+			if strings.Contains(str, "Block{") {
+				str = str + "}"
+			}
 			_, err = renderFile.WriteString(str + "\n")
 			if err != nil {
 				return nil, err
@@ -95,9 +103,9 @@ func UnmarshalLine(line string) (LogEntry, error) {
 		entry.Module = "consensus"
 
 		if strings.Contains(descrip, "signed proposal block") {
-			entry.Descrip = "Signed proposal block"
+			entry.Descrip = "Signed proposal block: Block{}"
 		} else {
-			entry.Descrip = "Block"
+			entry.Descrip = "Block{}"
 		}
 		return entry, err
 	} else {
@@ -187,11 +195,11 @@ func GetStatus(entries []LogEntry, date string, time string) (Status, error) {
 
 	for _, entry := range entries {
 		//this logic ensures that we get all entries at a given time rather than just the first
-		if entry.Date == date && entry.Time == time {
+		if entry.Date == date && strings.Contains(entry.Time, time) {
 			watch = true
 		}
 
-		if watch == true && entry.Time != time {
+		if watch == true && !strings.Contains(entry.Time, time) {
 			break
 		}
 
@@ -273,15 +281,15 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 	}
 
 	for _, entry := range entries {
-		if entry.Date == stD && entry.Time == stT && parse == false {
+		if entry.Date == stD && strings.Contains(entry.Time, stT) && parse == false {
 			parse = true
 		}
 
-		if entry.Date == enD && entry.Time == enT {
+		if entry.Date == enD && strings.Contains(entry.Time, enT) {
 			watch = true
 		}
 
-		if watch == true && entry.Time != enT {
+		if watch == true && !strings.Contains(entry.Time, enT) {
 			fmt.Println(entry.Time, msgs)
 			break
 		}
@@ -391,6 +399,7 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 			if entry.Descrip == "Receive" {
 				peerParse := strings.Split(entry.Other["src"], "}")[0]
 				ip := strings.Split(peerParse, "{")[2]
+				ip = strings.Split(ip, ":")[0]
 
 				for i, peer := range peers {
 					if myIp == peer {
@@ -399,6 +408,11 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 						msgs[i] = "X"
 					}
 				}
+			}
+
+			//processing for block commits
+			if entry.Descrip == "Block{}" {
+				fmt.Println(entry.Time, "Block committed")
 			}
 		}
 	}
@@ -637,6 +651,51 @@ func findPeers(peerFilename string) ([]string, error) {
 	return peers, err
 }
 
+func FindIpsFromLog(entries []LogEntry) {
+	var peers []string
+	var add bool
+
+	for _, entry := range entries {
+		add = true
+		if entry.Descrip == "Receive" {
+			addPeer := strings.Split(entry.Other["src"], "{")[2]
+			addPeer = strings.Split(addPeer, ":")[0]
+
+			for _, peer := range peers {
+				if addPeer == peer {
+					add = false
+				}
+			}
+			if add == true {
+				peers = append(peers, addPeer)
+			}
+		}
+	}
+
+	err := ioutil.WriteFile("peers", nil, 0600)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	f, err := os.OpenFile("./peers", os.O_RDWR|os.O_APPEND, 0600)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, peer := range peers {
+		f.WriteString(peer + "\n")
+	}
+
+	myIP := findMyIP(entries)
+
+	f.WriteString(myIP)
+
+	err = f.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 //findMyIP parses a verbose log and pulls out the
 func findMyIP(entries []LogEntry) string {
 	var ip string
@@ -645,6 +704,7 @@ func findMyIP(entries []LogEntry) string {
 		if entry.Descrip == "Starting DefaultListener" {
 			ipParse := strings.Split(entry.Other["impl"], "@")[1]
 			ip = strings.Replace(ipParse, ")", "", 1)
+			ip = strings.Split(ip, ":")[0]
 			break
 		}
 	}
