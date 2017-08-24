@@ -102,7 +102,7 @@ func UnmarshalLine(line string) (LogEntry, error) {
 	if strings.Contains(descrip, "Block{") {
 		entry.Module = "consensus"
 
-		if strings.Contains(descrip, "signed proposal block") {
+		if strings.Contains(descrip, "Signed proposal block") {
 			entry.Descrip = "Signed proposal block: Block{}"
 		} else {
 			entry.Descrip = "Block{}"
@@ -264,6 +264,7 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 	var parse bool
 	var watch bool
 	var err error
+	var prvTime int
 
 	first := true
 
@@ -327,6 +328,8 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 				trackTime = time
 				prevMinute = minute
 				first = false
+			} else if time < prvTime {
+				fmt.Println(entry.Time, "ERROR: LOGS OUT OF ORDER")
 			}
 
 			//this if/else statement determines when to return a statement, accounting for the turnover of minutes, hours, days, months, years
@@ -343,7 +346,6 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 					msgs[i] = "_"
 				}
 			} else if (minute == (prevMinute+1) && time > trackTime) || minute >= (prevMinute+2) { //minute rolls over
-				fmt.Println("good")
 				fmt.Println(entry.Time, msgs)
 				//update trackers
 				trackTime = time
@@ -395,6 +397,8 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 				fmt.Println(entry.Time, msgs)
 			}
 
+			//find out of order logs
+
 			//processing logic for received msgs
 			if entry.Descrip == "Receive" {
 				peerParse := strings.Split(entry.Other["src"], "}")[0]
@@ -414,6 +418,9 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 			if entry.Descrip == "Block{}" {
 				fmt.Println(entry.Time, "Block committed")
 			}
+
+			//set prvTime
+			prvTime = time
 		}
 	}
 	return err
