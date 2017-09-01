@@ -22,13 +22,15 @@ type LogEntry struct {
 }
 
 type Status struct {
-	Height     int
-	Round      int
-	Step       string
-	Proposal   string
-	BlockParts []string
-	PreVotes   []string
-	PreCommits []string
+	Height      int
+	Round       int
+	Step        string
+	Proposal    string
+	BlockParts  []string
+	PreVotes    []string
+	PreCommits  []string
+	XPreVotes   []string
+	XPreCommits []string
 }
 
 //OpenLog opens log file
@@ -177,21 +179,20 @@ func UnmarshalLines(file *os.File) ([]LogEntry, error) {
 }
 
 //GetStatus parses log entries for relevant data (see below for all relevant fucntions)
-func GetStatus(entries []LogEntry, date string, time string) (Status, error) {
+func GetStatus(entries []LogEntry, date string, time string, peerFilename string) (Status, error) {
 	var err error
-
 	var status Status
-
 	var bpArr []string
-	var pvArr []string
-	var pcArr []string
-
-	var numVals int
-	var myNode int
-
 	var watch = false
 
 	status.Proposal = "no"
+
+	peers, err := findPeers(peerFilename)
+	if err != nil {
+		return status, err
+	}
+
+	myIP := findMyIP(entries)
 
 	for _, entry := range entries {
 		//this logic ensures that we get all entries at a given time rather than just the first
@@ -203,22 +204,8 @@ func GetStatus(entries []LogEntry, date string, time string) (Status, error) {
 			break
 		}
 
-		if _, ok := entry.Other["localPV"]; ok {
-			numVals, err = findNumVals(entry)
-			if err != nil {
-				return status, err
-			}
-		}
-
-		if entry.Descrip == "Signed and pushed vote" {
-			myNode, err = findMyNode(entry)
-			if err != nil {
-				return status, err
-			}
-		}
-
 		if strings.Contains(entry.Descrip, "enter") && !strings.Contains(entry.Descrip, "Invalid") {
-			status, err = newStep(status, entry, numVals)
+			status, err = newStep(status, entry, peers)
 			if err != nil {
 				return status, err
 			}
@@ -239,23 +226,24 @@ func GetStatus(entries []LogEntry, date string, time string) (Status, error) {
 		}
 
 		if entry.Descrip == "Receive" && strings.Contains(entry.Other["msg"], "Vote Vote") {
-			status, pvArr, pcArr, err = checkVotes(status, entry, pvArr, pcArr)
+			status, err = checkVotes(status, entry, peers)
 			if err != nil {
 				return status, err
 			}
 		}
 
 		if entry.Descrip == "Signed and pushed vote" {
-			status, err = myVote(status, entry, myNode)
-			if err != nil {
-				return status, err
-			}
+			status = checkMyVote(status, entry, myIP, peers)
+		}
+
+		if strings.Contains(entry.Descrip, "Picked") && strings.Contains(entry.Descrip, "Pre") {
+			status = checkExpected(status, entry, peers, myIP)
 		}
 	}
 	return status, err
 }
 
-func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, stT string, enD string, enT string) error {
+func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, stT string, enD string, enT string, order bool, commits bool) error {
 	var trackTime int
 	var prevMinute int
 	var prevHour int
@@ -272,8 +260,6 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 	if err != nil {
 		return err
 	}
-
-	myIp := findMyIP(entries)
 
 	var msgs []string
 
@@ -328,7 +314,7 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 				trackTime = time
 				prevMinute = minute
 				first = false
-			} else if time < prvTime {
+			} else if time < prvTime && order == true {
 				fmt.Println(entry.Time, "ERROR: LOGS OUT OF ORDER")
 			}
 
@@ -400,22 +386,34 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 			//find out of order logs
 
 			//processing logic for received msgs
-			if entry.Descrip == "Receive" {
-				peerParse := strings.Split(entry.Other["src"], "}")[0]
-				ip := strings.Split(peerParse, "{")[2]
-				ip = strings.Split(ip, ":")[0]
+			for i, peer := range peers {
+				if entry.Descrip == "Receive" {
+					peerParse := strings.Split(entry.Other["src"], "}")[0]
+					ip := strings.Split(peerParse, "{")[2]
+					ip = strings.Split(ip, ":")[0]
 
-				for i, peer := range peers {
-					if myIp == peer {
+					if ip == peer {
+						if strings.Contains(entry.Other["msg"], "00000000") && strings.Contains(entry.Other["msg"], "Vote Vote") {
+							msgs[i] = "Y"
+							break
+						} else {
+							msgs[i] = "X"
+							break
+						}
+					}
+				} else if strings.Contains(entry.Descrip, "pushed") || strings.Contains(entry.Descrip, "Picked") {
+					if entry.Descrip == "Signed and pushed vote" && strings.Contains(entry.Other["vote"], "00000000") {
+						msgs[i] = "N"
+						break
+					} else {
 						msgs[i] = "O"
-					} else if ip == peer {
-						msgs[i] = "X"
+						break
 					}
 				}
 			}
 
 			//processing for block commits
-			if entry.Descrip == "Block{}" {
+			if entry.Descrip == "Block{}" && commits == true {
 				fmt.Println(entry.Time, "Block committed")
 			}
 
@@ -428,37 +426,8 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 
 //BELOW FUNCTIONS BELONG TO getStatus ^^
 
-//find number of validators
-func findNumVals(entry LogEntry) (int, error) {
-	var err error
-
-	vals := strings.Split(entry.Other["localPV"], "{")[1]
-	stringVals := strings.Split(vals, ":")[0]
-	numVals, err := strconv.Atoi(stringVals)
-	if err != nil {
-		return numVals, err
-	}
-
-	return numVals, err
-}
-
-//find my own node's vote number
-func findMyNode(entry LogEntry) (int, error) {
-	var err error
-	var i int
-
-	vote := entry.Other["vote"]
-
-	temp := strings.Split(vote, "{")[1]
-	i, err = strconv.Atoi(strings.Split(temp, ":")[0])
-	if err != nil {
-		return i, err
-	}
-	return i, err
-}
-
 //check for new round; set HRS, and reset votes if new round
-func newStep(status Status, entry LogEntry, numVals int) (Status, error) {
+func newStep(status Status, entry LogEntry, peers []string) (Status, error) {
 	var err error
 
 	descrip := entry.Descrip
@@ -483,12 +452,15 @@ func newStep(status Status, entry LogEntry, numVals int) (Status, error) {
 		status.BlockParts = status.BlockParts[:0]
 
 		status.PreVotes = status.PreVotes[:0]
-
+		status.XPreVotes = status.XPreVotes[:0]
 		status.PreCommits = status.PreCommits[:0]
+		status.XPreCommits = status.XPreCommits[:0]
 
-		for i := 0; i < numVals; i++ {
+		for i := 0; i < len(peers); i++ {
 			status.PreVotes = append(status.PreVotes, "_")
+			status.XPreVotes = append(status.XPreVotes, "_")
 			status.PreCommits = append(status.PreCommits, "_")
+			status.XPreCommits = append(status.XPreCommits, "_")
 		}
 
 	} else if strings.Contains(descrip, "enterPropose") {
@@ -542,100 +514,118 @@ func checkBlock(status Status, entry LogEntry, bpArr []string) (Status, []string
 }
 
 //add unique votes from validators
-func checkVotes(status Status, entry LogEntry, pvArr []string, pcArr []string) (Status, []string, []string, error) {
+func checkVotes(status Status, entry LogEntry, peers []string) (Status, error) {
 	var err error
-
-	pvUnique := true
-	pcUnique := true
 
 	vote := entry.Other["msg"]
 
 	if strings.Contains(vote, "Prevote") {
-		for _, pv := range pvArr {
-			if pv == vote {
-				pvUnique = false
-				break
-			} else {
-				pvUnique = true
-			}
+
+		heightStr := strings.Split(strings.Split(vote, "/")[0], " ")[2]
+		roundStr := strings.Split(vote, "/")[1]
+
+		height, err := strconv.Atoi(heightStr)
+		if err != nil {
+			return status, err
+		}
+		round, err := strconv.Atoi(roundStr)
+		if err != nil {
+			return status, err
 		}
 
-		if pvUnique == true {
-			pvArr = append(pvArr, vote)
+		if height == status.Height && round == status.Round {
 
-			temp := strings.Split(vote, "{")[1]
-			i, err := strconv.Atoi(strings.Split(temp, ":")[0])
-			if err != nil {
-				return status, pvArr, pcArr, err
-			}
+			for i, peer := range peers {
 
-			heightStr := strings.Split(strings.Split(vote, "/")[0], " ")[2]
-			roundStr := strings.Split(vote, "/")[1]
-
-			height, err := strconv.Atoi(heightStr)
-			if err != nil {
-				return status, pvArr, pcArr, err
-			}
-			round, err := strconv.Atoi(roundStr)
-			if err != nil {
-				return status, pvArr, pcArr, err
-			}
-
-			if height == status.Height && round == status.Round {
-				status.PreVotes[i] = "X"
+				if strings.Contains(entry.Other["src"], peer) {
+					if strings.Contains(entry.Other["msg"], "00000000") {
+						status.PreVotes[i] = "Y"
+						break
+					} else {
+						status.PreVotes[i] = "X"
+						break
+					}
+				}
 			}
 		}
 	}
 
 	if strings.Contains(vote, "Precommit") {
-		for _, pc := range pcArr {
-			if pc == vote {
-				pcUnique = false
-				break
-			} else {
-				pcUnique = true
-			}
+
+		heightStr := strings.Split(strings.Split(vote, "/")[0], " ")[2]
+		roundStr := strings.Split(vote, "/")[1]
+
+		height, err := strconv.Atoi(heightStr)
+		if err != nil {
+			return status, err
+		}
+		round, err := strconv.Atoi(roundStr)
+		if err != nil {
+			return status, err
 		}
 
-		if pcUnique == true {
-			pcArr = append(pcArr, vote)
-
-			temp := strings.Split(vote, "{")[1]
-			i, err := strconv.Atoi(strings.Split(temp, ":")[0])
-			if err != nil {
-				return status, pvArr, pcArr, err
-			}
-
-			heightStr := strings.Split(strings.Split(vote, "/")[0], " ")[2]
-			roundStr := strings.Split(vote, "/")[1]
-
-			height, err := strconv.Atoi(heightStr)
-			if err != nil {
-				return status, pvArr, pcArr, err
-			}
-			round, err := strconv.Atoi(roundStr)
-			if err != nil {
-				return status, pvArr, pcArr, err
-			}
-
-			if height == status.Height && round == status.Round {
-				status.PreCommits[i] = "X"
+		if height == status.Height && round == status.Round {
+			for i, peer := range peers {
+				if strings.Contains(entry.Other["src"], peer) {
+					if strings.Contains(entry.Other["msg"], "00000000") {
+						status.PreCommits[i] = "Y"
+						break
+					} else {
+						status.PreCommits[i] = "X"
+						break
+					}
+				}
 			}
 		}
-	}
-	return status, pvArr, pcArr, err
-}
-
-//check for own vote
-func myVote(status Status, entry LogEntry, myNode int) (Status, error) {
-	var err error
-
-	if status.Step == "Prevote" {
-		status.PreVotes[myNode] = "X"
-	} else if status.Step == "Precommit" {
-		status.PreCommits[myNode] = "X"
 	}
 	return status, err
+}
+
+func checkMyVote(status Status, entry LogEntry, myIP string, peers []string) Status {
+	for i, peer := range peers {
+		if peer == myIP {
+			if strings.Contains(entry.Other["vote"], "Prevote") {
+				if strings.Contains(entry.Other["vote"], "00000000") {
+					status.PreVotes[i] = "N"
+					status.XPreVotes[i] = "N"
+					break
+				} else {
+					status.PreVotes[i] = "O"
+					status.XPreVotes[i] = "O"
+					break
+				}
+			} else if strings.Contains(entry.Other["vote"], "Precommit") {
+				if strings.Contains(entry.Other["vote"], "00000000") {
+					status.PreCommits[i] = "N"
+					status.XPreCommits[i] = "N"
+					break
+				} else {
+					status.PreCommits[i] = "O"
+					status.XPreCommits[i] = "O"
+					break
+				}
+			}
+		}
+	}
+
+	return status
+}
+
+func checkExpected(status Status, entry LogEntry, peers []string, myIP string) Status {
+	for i, peer := range peers {
+		if strings.Contains(entry.Descrip, "Prevotes") {
+			if strings.Contains(entry.Other["peer"], peer) {
+				status.XPreVotes[i] = "X"
+				break
+			}
+		} else if strings.Contains(entry.Descrip, "Precommits") {
+			if strings.Contains(entry.Other["peer"], peer) {
+				status.XPreCommits[i] = "X"
+				break
+			}
+		}
+	}
+	return status
 }
 
 //*****************************************************************************
@@ -703,7 +693,7 @@ func FindIpsFromLog(entries []LogEntry) {
 	}
 }
 
-//findMyIP parses a verbose log and pulls out the
+//findMyIP parses a verbose log and pulls out the current node's IP
 func findMyIP(entries []LogEntry) string {
 	var ip string
 
