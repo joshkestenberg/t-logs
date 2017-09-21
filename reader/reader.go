@@ -2,6 +2,7 @@ package reader
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -192,6 +193,8 @@ func GetStatus(entries []LogEntry, date string, time string, peerFilename string
 		return status, err
 	}
 
+	indexedPeers := indexPeers()
+
 	myIP := findMyIP(entries)
 
 	for _, entry := range entries {
@@ -226,18 +229,18 @@ func GetStatus(entries []LogEntry, date string, time string, peerFilename string
 		}
 
 		if entry.Descrip == "Receive" && strings.Contains(entry.Other["msg"], "Vote Vote") {
-			status, err = checkVotes(status, entry, peers)
+			status, err = checkVotes(status, entry, peers, indexedPeers)
 			if err != nil {
 				return status, err
 			}
 		}
 
 		if entry.Descrip == "Signed and pushed vote" {
-			status = checkMyVote(status, entry, myIP, peers)
+			status = checkMyVote(status, entry, myIP, peers, indexedPeers)
 		}
 
 		if strings.Contains(entry.Descrip, "Picked") && strings.Contains(entry.Descrip, "Pre") {
-			status = checkExpected(status, entry, peers, myIP)
+			status = checkExpected(status, entry, peers, myIP, indexedPeers)
 		}
 	}
 	return status, err
@@ -260,6 +263,8 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 	if err != nil {
 		return err
 	}
+
+	indexedPeers := indexPeers()
 
 	var msgs []string
 
@@ -386,13 +391,13 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 			//find out of order logs
 
 			//processing logic for received msgs
-			for i, peer := range peers {
+			for i, ip := range indexedPeers {
 				if entry.Descrip == "Receive" {
 					peerParse := strings.Split(entry.Other["src"], "}")[0]
-					ip := strings.Split(peerParse, "{")[2]
-					ip = strings.Split(ip, ":")[0]
+					ipParse := strings.Split(peerParse, "{")[2]
+					ipParse = strings.Split(ip, ":")[0]
 
-					if ip == peer {
+					if ipParse == ip {
 						if strings.Contains(entry.Other["msg"], "00000000") && strings.Contains(entry.Other["msg"], "Vote Vote") {
 							msgs[i] = "Y"
 							break
@@ -427,7 +432,7 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 //BELOW FUNCTIONS BELONG TO getStatus ^^
 
 //check for new round; set HRS, and reset votes if new round
-func newStep(status Status, entry LogEntry, peers []string) (Status, error) {
+func newStep(status Status, entry LogEntry, peers map[string]string) (Status, error) {
 	var err error
 
 	descrip := entry.Descrip
@@ -514,7 +519,7 @@ func checkBlock(status Status, entry LogEntry, bpArr []string) (Status, []string
 }
 
 //add unique votes from validators
-func checkVotes(status Status, entry LogEntry, peers []string) (Status, error) {
+func checkVotes(status Status, entry LogEntry, peers map[string]string, indexedPeers []string) (Status, error) {
 	var err error
 
 	vote := entry.Other["msg"]
@@ -534,10 +539,8 @@ func checkVotes(status Status, entry LogEntry, peers []string) (Status, error) {
 		}
 
 		if height == status.Height && round == status.Round {
-
-			for i, peer := range peers {
-
-				if strings.Contains(entry.Other["src"], peer) {
+			for i, ip := range indexedPeers {
+				if strings.Contains(entry.Other["msg"], peers[ip]) {
 					if strings.Contains(entry.Other["msg"], "00000000") {
 						status.PreVotes[i] = "Y"
 						break
@@ -565,8 +568,8 @@ func checkVotes(status Status, entry LogEntry, peers []string) (Status, error) {
 		}
 
 		if height == status.Height && round == status.Round {
-			for i, peer := range peers {
-				if strings.Contains(entry.Other["src"], peer) {
+			for i, ip := range indexedPeers {
+				if strings.Contains(entry.Other["msg"], peers[ip]) {
 					if strings.Contains(entry.Other["msg"], "00000000") {
 						status.PreCommits[i] = "Y"
 						break
@@ -581,9 +584,9 @@ func checkVotes(status Status, entry LogEntry, peers []string) (Status, error) {
 	return status, err
 }
 
-func checkMyVote(status Status, entry LogEntry, myIP string, peers []string) Status {
-	for i, peer := range peers {
-		if peer == myIP {
+func checkMyVote(status Status, entry LogEntry, myIP string, peers map[string]string, indexedPeers []string) Status {
+	for i, ip := range indexedPeers {
+		if ip == myIP {
 			if strings.Contains(entry.Other["vote"], "Prevote") {
 				if strings.Contains(entry.Other["vote"], "00000000") {
 					status.PreVotes[i] = "N"
@@ -611,15 +614,15 @@ func checkMyVote(status Status, entry LogEntry, myIP string, peers []string) Sta
 	return status
 }
 
-func checkExpected(status Status, entry LogEntry, peers []string, myIP string) Status {
-	for i, peer := range peers {
+func checkExpected(status Status, entry LogEntry, peers map[string]string, myIP string, indexedPeers []string) Status {
+	for i, ip := range indexedPeers {
 		if strings.Contains(entry.Descrip, "Prevotes") {
-			if strings.Contains(entry.Other["peer"], peer) {
+			if strings.Contains(entry.Other["peer"], ip) {
 				status.XPreVotes[i] = "X"
 				break
 			}
 		} else if strings.Contains(entry.Descrip, "Precommits") {
-			if strings.Contains(entry.Other["peer"], peer) {
+			if strings.Contains(entry.Other["peer"], ip) {
 				status.XPreCommits[i] = "X"
 				break
 			}
@@ -631,21 +634,37 @@ func checkExpected(status Status, entry LogEntry, peers []string, myIP string) S
 //*****************************************************************************
 
 //these belong to getMessages
-//findPeers reads in a peer file and creates an array of peers
-func findPeers(peerFilename string) ([]string, error) {
-	var peers []string
+//findPeers reads in a peer file and creates a map of peer ip's to pubkeys
+func findPeers(peerFilename string) (map[string]string, error) {
+	peers := make(map[string]string)
 
-	file, err := OpenLog(peerFilename)
+	file, err := ioutil.ReadFile(peerFilename)
 	if err != nil {
 		return peers, err
+	}
+
+	json.Unmarshal(file, &peers)
+
+	fmt.Println(peers)
+
+	return peers, err
+}
+
+//this will order our peers for consistency
+func indexPeers() []string {
+	var indexedPeers []string
+
+	file, err := os.OpenFile("./peers", os.O_RDWR|os.O_APPEND, 0600)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		str := scanner.Text()
-		peers = append(peers, str)
+		indexedPeers = append(indexedPeers, str)
 	}
-	return peers, err
+	return indexedPeers
 }
 
 func FindIpsFromLog(entries []LogEntry) {
