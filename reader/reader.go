@@ -207,7 +207,7 @@ func GetStatus(entries []LogEntry, date string, time string, peerFilename string
 			break
 		}
 
-		if strings.Contains(entry.Descrip, "enter") && !strings.Contains(entry.Descrip, "Invalid") {
+		if strings.Contains(entry.Descrip, "enter") && !strings.Contains(entry.Descrip, "Invalid") && !strings.Contains(entry.Descrip, "Wait") {
 			status, err = newStep(status, entry, peers)
 			if err != nil {
 				return status, err
@@ -267,6 +267,8 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 	indexedPeers := indexPeers()
 
 	var msgs []string
+
+	myIp := findMyIP(entries)
 
 	for i := 0; i < len(peers); i++ {
 		msgs = append(msgs, "_")
@@ -388,29 +390,22 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 				fmt.Println(entry.Time, msgs)
 			}
 
-			//find out of order logs
-
 			//processing logic for received msgs
-			for i, ip := range indexedPeers {
-				if entry.Descrip == "Receive" {
+
+			if entry.Descrip == "Receive" {
+				for i, ip := range indexedPeers {
 					peerParse := strings.Split(entry.Other["src"], "}")[0]
 					ipParse := strings.Split(peerParse, "{")[2]
-					ipParse = strings.Split(ip, ":")[0]
+					ipParse = strings.Split(ipParse, ":")[0]
 
 					if ipParse == ip {
-						if strings.Contains(entry.Other["msg"], "00000000") && strings.Contains(entry.Other["msg"], "Vote Vote") {
-							msgs[i] = "Y"
-							break
-						} else {
-							msgs[i] = "X"
-							break
-						}
-					}
-				} else if strings.Contains(entry.Descrip, "pushed") || strings.Contains(entry.Descrip, "Picked") {
-					if entry.Descrip == "Signed and pushed vote" && strings.Contains(entry.Other["vote"], "00000000") {
-						msgs[i] = "N"
+						msgs[i] = "X"
 						break
-					} else {
+					}
+				}
+			} else if strings.Contains(entry.Descrip, "pushed") || strings.Contains(entry.Descrip, "Picked") {
+				for i, ip := range indexedPeers {
+					if myIp == ip {
 						msgs[i] = "O"
 						break
 					}
@@ -438,14 +433,17 @@ func newStep(status Status, entry LogEntry, peers map[string]string) (Status, er
 	descrip := entry.Descrip
 
 	if strings.Contains(descrip, "enterNewRound") {
-		hrs := strings.Split(descrip, " ")[2]
-		hrsArr := strings.Split(hrs, "/")
+		hrs := strings.Split(descrip, " ")[0]
+		heightRound := strings.Split(hrs, "(")[1]
+		height := strings.Split(heightRound, "/")[0]
+		round := strings.Split(heightRound, "/")[1]
+		round = strings.Split(round, ")")[0]
 
-		status.Height, err = strconv.Atoi(hrsArr[0])
+		status.Height, err = strconv.Atoi(height)
 		if err != nil {
 			return status, err
 		}
-		status.Round, err = strconv.Atoi(hrsArr[1])
+		status.Round, err = strconv.Atoi(round)
 		if err != nil {
 			return status, err
 		}
@@ -585,8 +583,19 @@ func checkVotes(status Status, entry LogEntry, peers map[string]string, indexedP
 }
 
 func checkMyVote(status Status, entry LogEntry, myIP string, peers map[string]string, indexedPeers []string) Status {
+
+	voteHeight, err := strconv.Atoi(entry.Other["height"])
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	voteRound, err := strconv.Atoi(entry.Other["round"])
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	for i, ip := range indexedPeers {
-		if ip == myIP {
+		if ip == myIP && voteHeight == status.Height && voteRound == status.Round {
 			if strings.Contains(entry.Other["vote"], "Prevote") {
 				if strings.Contains(entry.Other["vote"], "00000000") {
 					status.PreVotes[i] = "N"
@@ -644,8 +653,6 @@ func findPeers(peerFilename string) (map[string]string, error) {
 	}
 
 	json.Unmarshal(file, &peers)
-
-	fmt.Println(peers)
 
 	return peers, err
 }
