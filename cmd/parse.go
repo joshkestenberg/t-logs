@@ -17,7 +17,7 @@ var commits *bool
 func init() {
 	RootCmd.AddCommand(StateCmd)
 	RootCmd.AddCommand(MsgsCmd)
-	RootCmd.AddCommand(PeersCmd)
+	RootCmd.AddCommand(NodesCmd)
 
 	order = MsgsCmd.PersistentFlags().Bool("order", false, "add msgs indicating when logs are out of order")
 	commits = MsgsCmd.PersistentFlags().Bool("commits", false, "add msgs indicating when blocks are committed")
@@ -41,17 +41,16 @@ var StateCmd = &cobra.Command{
   Takes thre args: peer file path, date (01-01), and time (00:00:00[.000 if you'd like more specificity])`,
 	Run: func(cmd *cobra.Command, args []string) {
 
-		if len(args) != 3 {
-			log.Fatal("3 args required: peer file path, date (01-01), and time (00:00:00[.000 if you'd like more specificity])")
+		if len(args) != 2 {
+			log.Fatal("2 args required: date (01-01), and time (00:00:00[.000 if you'd like more specificity])")
 		}
 
-		peerFile := args[0]
-		date := args[1]
-		time := args[2]
+		date := args[0]
+		time := args[1]
 
 		entries := Parse()
 
-		status, err := reader.GetStatus(entries, date, time, peerFile)
+		status, err := reader.GetStatus(entries, date, time)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -70,40 +69,41 @@ var MsgsCmd = &cobra.Command{
 	Y = received nil vote
 	N = sent nil vote
 
-  Takes six args: peer file path, duration in miliseconds (up to 59999), start date (01-01), start time (00:00:00[.000 if you'd like more specificity]), end date, and end time.`,
+  Takes five args: duration in miliseconds (up to 59999), start date (01-01), start time (00:00:00[.000 if you'd like more specificity]), end date, and end time.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if len(args) != 6 {
-			log.Fatal("6 args required: peer file path, duration in miliseconds (up to 59999), start date (01-01), start time (00:00:00[.000 if you'd like more specificity]), end date, and end time")
+		if len(args) != 5 {
+			log.Fatal("5 args required: duration in miliseconds (up to 59999), start date (01-01), start time (00:00:00[.000 if you'd like more specificity]), end date, and end time")
 		}
 
 		entries := Parse()
 
-		peerFile := args[0]
-		dur, err := strconv.Atoi(args[1])
+		dur, err := strconv.Atoi(args[0])
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		stD := args[2]
-		stT := args[3]
-		enD := args[4]
-		enT := args[5]
+		stD := args[1]
+		stT := args[2]
+		enD := args[3]
+		enT := args[4]
 
-		err = reader.GetMessages(entries, peerFile, dur, stD, stT, enD, enT, *order, *commits)
+		err = reader.GetMessages(entries, dur, stD, stT, enD, enT, *order, *commits)
 		if err != nil {
 			log.Fatal(err)
 		}
 	},
 }
 
-var PeersCmd = &cobra.Command{
-	Use:   "peers",
-	Short: "Output a peer file",
-	Long: `For a given node's log, peers will generate a list of all peer ip addresses (including it's own)
-  Note: When debugging a cluster of nodes, only one peer file should be used so to preserve the order of the nodes represented.`,
+var NodesCmd = &cobra.Command{
+	Use:   "nodes",
+	Short: "Outputs nodes.json",
+	Long: `Given a cluster of nodes' log files, nodes generates a json file with each node's name, ip, pubkey, and bit array index.
+  Note: log files must be given for all validator nodes reflected in logs.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		entries := Parse()
+		if len(args) == 0 {
+			log.Fatal("You must input log files for all validator nodes")
+		}
 
-		reader.FindIpsFromLog(entries)
+		reader.GetPeers(args)
 	},
 }

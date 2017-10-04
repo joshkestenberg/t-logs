@@ -14,12 +14,12 @@ import (
 
 //LogEntry defines params for eventual json
 type LogEntry struct {
-	Level   string            `json:"level"`
-	Date    string            `json:"date"`
-	Time    string            `json:"time"`
-	Descrip string            `json:"descrip"`
-	Module  string            `json:"module"`
-	Other   map[string]string `json:"other"`
+	Level   string
+	Date    string
+	Time    string
+	Descrip string
+	Module  string
+	Other   map[string]string
 }
 
 type Status struct {
@@ -34,52 +34,69 @@ type Status struct {
 	XPreCommits []string
 }
 
-//OpenLog opens log file
-func OpenLog(filepath string) (*os.File, error) {
-	return os.Open(filepath)
+type Peer struct {
+	Name   string `json:"name"`
+	Ip     string `json:"ip"`
+	Pubkey string `json:"pubkey"`
+	Index  string `json:"index"`
 }
 
-//RenderDoc removes blocks and spaces to prep doc for parse
-func RenderDoc(file *os.File) (*os.File, error) {
+func GetPeers(filenames []string) error {
+	var str string
 	var err error
+	var peers []Peer
 
-	fileStat, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
+	for _, filename := range filenames {
+		file, err := os.Open(filename)
+		if err != nil {
+			return err
+		}
 
-	name := fileStat.Name()
-	renderName := "rendered_" + name
+		peer := Peer{}
 
-	if _, err := os.Stat("./" + renderName); err == nil {
-		return os.OpenFile(renderName, os.O_RDWR|os.O_APPEND, 0600)
-	}
+		peer.Name = filename
 
-	err = ioutil.WriteFile(renderName, nil, 0600)
-	if err != nil {
-		return nil, err
-	}
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			if peer.Index != "" && peer.Ip != "" && peer.Name != "" && peer.Pubkey != "" {
+				peers = append(peers, peer)
+				break
+			} else {
+				str = scanner.Text()
+				entry, err := UnmarshalLine(str)
 
-	renderFile, err := os.OpenFile(renderName, os.O_RDWR|os.O_APPEND, 0600)
-	if err != nil {
-		return nil, err
-	}
+				if entry.Descrip == "Starting DefaultListener" {
+					ip := strings.Split(entry.Other["impl"], "@")[1]
+					ip = strings.Split(ip, ":")[0]
+					peer.Ip = ip
+				} else if strings.Contains(entry.Descrip, "turn to propose") {
+					pubkey := strings.Split(entry.Other["privValidator"], "{")[1]
+					peer.Pubkey = pubkey[:12]
+				} else if peer.Pubkey != "" && strings.Contains(entry.Descrip, "pushed vote") && strings.Contains(entry.Other["vote"], peer.Pubkey) {
+					index := strings.Split(entry.Other["vote"], "{")[1]
+					peer.Index = strings.Split(index, ":")[0]
+				}
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		str := scanner.Text()
-		if strings.Contains(str, `|`) {
-			if strings.Contains(str, "Block{") {
-				str = str + "}"
-			}
-			_, err = renderFile.WriteString(str + "\n")
-			if err != nil {
-				return nil, err
+				if err = scanner.Err(); err != nil {
+					return err
+				}
 			}
 		}
 	}
 
-	return os.OpenFile(renderName, os.O_RDWR|os.O_APPEND, 0600)
+	err = ioutil.WriteFile("nodes.json", nil, 0600)
+	if err != nil {
+		return err
+	}
+
+	file, err := os.OpenFile("nodes.json", os.O_RDWR|os.O_APPEND, 0600)
+	if err != nil {
+		return err
+	}
+
+	err = MarshalJSON(peers, file)
+
+	return err
 }
 
 //UnmarshalLine takes one line at a time and outputs a struct
@@ -154,33 +171,26 @@ func UnmarshalLine(line string) (LogEntry, error) {
 	return entry, err
 }
 
-//UnmarshalLines converts given lines to an array of structs
-func UnmarshalLines(file *os.File) ([]LogEntry, error) {
-	var str string
+func MarshalJSON(peers []Peer, file *os.File) error {
 	var err error
-	var entries []LogEntry
 
-	//intialize scanner and scan each line
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		//scan each applicable line, make struct, add struct to []struct
-		str = scanner.Text()
-		entry, err := UnmarshalLine(str)
+	for i := 0; i < len(peers); i++ {
+		peer, err := json.Marshal(peers[i])
 		if err != nil {
-			return nil, err
+			return err
 		}
-		entries = append(entries, entry)
+
+		_, err = file.WriteString(string(peer) + "\n")
+		if err != nil {
+			return err
+		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-
-	return entries, err
+	return err
 }
 
 //GetStatus parses log entries for relevant data (see below for all relevant fucntions)
-func GetStatus(entries []LogEntry, date string, time string, peerFilename string) (Status, error) {
+func GetStatus(entries []LogEntry, date string, time string) (Status, error) {
 	var err error
 	var status Status
 	var bpArr []string
@@ -188,12 +198,10 @@ func GetStatus(entries []LogEntry, date string, time string, peerFilename string
 
 	status.Proposal = "no"
 
-	peers, err := findPeers(peerFilename)
+	peers, err := findPeers()
 	if err != nil {
 		return status, err
 	}
-
-	indexedPeers := indexPeers()
 
 	myIP := findMyIP(entries)
 
@@ -229,24 +237,30 @@ func GetStatus(entries []LogEntry, date string, time string, peerFilename string
 		}
 
 		if entry.Descrip == "Receive" && strings.Contains(entry.Other["msg"], "Vote Vote") {
-			status, err = checkVotes(status, entry, peers, indexedPeers)
+			status, err = checkVotes(status, entry, peers)
 			if err != nil {
 				return status, err
 			}
 		}
 
 		if entry.Descrip == "Signed and pushed vote" {
-			status = checkMyVote(status, entry, myIP, peers, indexedPeers)
+			status, err = checkMyVote(status, entry, myIP, peers)
+			if err != nil {
+				return status, err
+			}
 		}
 
 		if strings.Contains(entry.Descrip, "Picked") && strings.Contains(entry.Descrip, "Pre") {
-			status = checkExpected(status, entry, peers, myIP, indexedPeers)
+			status, err = checkExpected(status, entry, peers, myIP)
+			if err != nil {
+				return status, err
+			}
 		}
 	}
 	return status, err
 }
 
-func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, stT string, enD string, enT string, order bool, commits bool) error {
+func GetMessages(entries []LogEntry, dur int, stD string, stT string, enD string, enT string, order bool, commits bool) error {
 	var trackTime int
 	var prevMinute int
 	var prevHour int
@@ -259,12 +273,10 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 
 	first := true
 
-	peers, err := findPeers(peerFilename)
+	peers, err := findPeers()
 	if err != nil {
 		return err
 	}
-
-	indexedPeers := indexPeers()
 
 	var msgs []string
 
@@ -393,20 +405,33 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 			//processing logic for received msgs
 
 			if entry.Descrip == "Receive" {
-				for i, ip := range indexedPeers {
-					peerParse := strings.Split(entry.Other["src"], "}")[0]
-					ipParse := strings.Split(peerParse, "{")[2]
-					ipParse = strings.Split(ipParse, ":")[0]
 
-					if ipParse == ip {
-						msgs[i] = "X"
+				peerParse := strings.Split(entry.Other["src"], "}")[0]
+				ipParse := strings.Split(peerParse, "{")[2]
+				ipParse = strings.Split(ipParse, ":")[0]
+
+				for _, peer := range peers {
+
+					index, err := strconv.Atoi(peer.Index)
+					if err != nil {
+						return err
+					}
+
+					if ipParse == peer.Ip {
+						msgs[index] = "X"
 						break
 					}
 				}
 			} else if strings.Contains(entry.Descrip, "pushed") || strings.Contains(entry.Descrip, "Picked") {
-				for i, ip := range indexedPeers {
-					if myIp == ip {
-						msgs[i] = "O"
+				for _, peer := range peers {
+
+					index, err := strconv.Atoi(peer.Index)
+					if err != nil {
+						return err
+					}
+
+					if myIp == peer.Ip {
+						msgs[index] = "O"
 						break
 					}
 				}
@@ -427,7 +452,7 @@ func GetMessages(entries []LogEntry, peerFilename string, dur int, stD string, s
 //BELOW FUNCTIONS BELONG TO getStatus ^^
 
 //check for new round; set HRS, and reset votes if new round
-func newStep(status Status, entry LogEntry, peers map[string]string) (Status, error) {
+func newStep(status Status, entry LogEntry, peers []Peer) (Status, error) {
 	var err error
 
 	descrip := entry.Descrip
@@ -517,7 +542,7 @@ func checkBlock(status Status, entry LogEntry, bpArr []string) (Status, []string
 }
 
 //add unique votes from validators
-func checkVotes(status Status, entry LogEntry, peers map[string]string, indexedPeers []string) (Status, error) {
+func checkVotes(status Status, entry LogEntry, peers []Peer) (Status, error) {
 	var err error
 
 	vote := entry.Other["msg"]
@@ -531,19 +556,26 @@ func checkVotes(status Status, entry LogEntry, peers map[string]string, indexedP
 		if err != nil {
 			return status, err
 		}
+
 		round, err := strconv.Atoi(roundStr)
 		if err != nil {
 			return status, err
 		}
 
 		if height == status.Height && round == status.Round {
-			for i, ip := range indexedPeers {
-				if strings.Contains(entry.Other["msg"], peers[ip]) {
+			for _, peer := range peers {
+
+				index, err := strconv.Atoi(peer.Index)
+				if err != nil {
+					return status, err
+				}
+
+				if strings.Contains(entry.Other["msg"], peer.Pubkey) {
 					if strings.Contains(entry.Other["msg"], "00000000") {
-						status.PreVotes[i] = "Y"
+						status.PreVotes[index] = "Y"
 						break
 					} else {
-						status.PreVotes[i] = "X"
+						status.PreVotes[index] = "X"
 						break
 					}
 				}
@@ -566,13 +598,18 @@ func checkVotes(status Status, entry LogEntry, peers map[string]string, indexedP
 		}
 
 		if height == status.Height && round == status.Round {
-			for i, ip := range indexedPeers {
-				if strings.Contains(entry.Other["msg"], peers[ip]) {
+			for _, peer := range peers {
+				index, err := strconv.Atoi(peer.Index)
+				if err != nil {
+					return status, err
+				}
+
+				if strings.Contains(entry.Other["msg"], peer.Pubkey) {
 					if strings.Contains(entry.Other["msg"], "00000000") {
-						status.PreCommits[i] = "Y"
+						status.PreCommits[index] = "Y"
 						break
 					} else {
-						status.PreCommits[i] = "X"
+						status.PreCommits[index] = "X"
 						break
 					}
 				}
@@ -582,8 +619,8 @@ func checkVotes(status Status, entry LogEntry, peers map[string]string, indexedP
 	return status, err
 }
 
-func checkMyVote(status Status, entry LogEntry, myIP string, peers map[string]string, indexedPeers []string) Status {
-
+func checkMyVote(status Status, entry LogEntry, myIP string, peers []Peer) (Status, error) {
+	var err error
 	voteHeight, err := strconv.Atoi(entry.Other["height"])
 	if err != nil {
 		log.Fatal(err)
@@ -594,129 +631,90 @@ func checkMyVote(status Status, entry LogEntry, myIP string, peers map[string]st
 		log.Fatal(err)
 	}
 
-	for i, ip := range indexedPeers {
-		if ip == myIP && voteHeight == status.Height && voteRound == status.Round {
+	for _, peer := range peers {
+
+		index, err := strconv.Atoi(peer.Index)
+		if err != nil {
+			return status, err
+		}
+
+		if peer.Ip == myIP && voteHeight == status.Height && voteRound == status.Round {
 			if strings.Contains(entry.Other["vote"], "Prevote") {
 				if strings.Contains(entry.Other["vote"], "00000000") {
-					status.PreVotes[i] = "N"
-					status.XPreVotes[i] = "N"
+					status.PreVotes[index] = "N"
+					status.XPreVotes[index] = "N"
 					break
 				} else {
-					status.PreVotes[i] = "O"
-					status.XPreVotes[i] = "O"
+					status.PreVotes[index] = "O"
+					status.XPreVotes[index] = "O"
 					break
 				}
 			} else if strings.Contains(entry.Other["vote"], "Precommit") {
 				if strings.Contains(entry.Other["vote"], "00000000") {
-					status.PreCommits[i] = "N"
-					status.XPreCommits[i] = "N"
+					status.PreCommits[index] = "N"
+					status.XPreCommits[index] = "N"
 					break
 				} else {
-					status.PreCommits[i] = "O"
-					status.XPreCommits[i] = "O"
+					status.PreCommits[index] = "O"
+					status.XPreCommits[index] = "O"
 					break
 				}
 			}
 		}
 	}
 
-	return status
+	return status, err
 }
 
-func checkExpected(status Status, entry LogEntry, peers map[string]string, myIP string, indexedPeers []string) Status {
-	for i, ip := range indexedPeers {
+func checkExpected(status Status, entry LogEntry, peers []Peer, myIP string) (Status, error) {
+	var err error
+
+	for _, peer := range peers {
+
+		index, err := strconv.Atoi(peer.Index)
+		if err != nil {
+			return status, err
+		}
+
 		if strings.Contains(entry.Descrip, "Prevotes") {
-			if strings.Contains(entry.Other["peer"], ip) {
-				status.XPreVotes[i] = "X"
+			if strings.Contains(entry.Other["peer"], peer.Ip) {
+				status.XPreVotes[index] = "X"
 				break
 			}
 		} else if strings.Contains(entry.Descrip, "Precommits") {
-			if strings.Contains(entry.Other["peer"], ip) {
-				status.XPreCommits[i] = "X"
+			if strings.Contains(entry.Other["peer"], peer.Ip) {
+				status.XPreCommits[index] = "X"
 				break
 			}
 		}
 	}
-	return status
+	return status, err
 }
 
 //*****************************************************************************
 
-//these belong to getMessages
-//findPeers reads in a peer file and creates a map of peer ip's to pubkeys
-func findPeers(peerFilename string) (map[string]string, error) {
-	peers := make(map[string]string)
+//findPeers reads in a peer file and creates an array of peer structs
+func findPeers() ([]Peer, error) {
+	var peers []Peer
+	var peer Peer
 
-	file, err := ioutil.ReadFile(peerFilename)
+	file, err := os.Open("nodes.json")
 	if err != nil {
 		return peers, err
-	}
-
-	json.Unmarshal(file, &peers)
-
-	return peers, err
-}
-
-//this will order our peers for consistency
-func indexPeers() []string {
-	var indexedPeers []string
-
-	file, err := os.OpenFile("./peers", os.O_RDWR|os.O_APPEND, 0600)
-	if err != nil {
-		log.Fatal(err)
 	}
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		str := scanner.Text()
-		indexedPeers = append(indexedPeers, str)
-	}
-	return indexedPeers
-}
 
-func FindIpsFromLog(entries []LogEntry) {
-	var peers []string
-	var add bool
+		byteStr := []byte(str)
 
-	for _, entry := range entries {
-		add = true
-		if entry.Descrip == "Receive" {
-			addPeer := strings.Split(entry.Other["src"], "{")[2]
-			addPeer = strings.Split(addPeer, ":")[0]
+		json.Unmarshal(byteStr, &peer)
 
-			for _, peer := range peers {
-				if addPeer == peer {
-					add = false
-				}
-			}
-			if add == true {
-				peers = append(peers, addPeer)
-			}
-		}
+		peers = append(peers, peer)
 	}
 
-	err := ioutil.WriteFile("peers", nil, 0600)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	f, err := os.OpenFile("./peers", os.O_RDWR|os.O_APPEND, 0600)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for _, peer := range peers {
-		f.WriteString(peer + "\n")
-	}
-
-	myIP := findMyIP(entries)
-
-	f.WriteString(myIP)
-
-	err = f.Close()
-	if err != nil {
-		log.Fatal(err)
-	}
+	return peers, err
 }
 
 //findMyIP parses a verbose log and pulls out the current node's IP
