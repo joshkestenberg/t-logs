@@ -3,7 +3,6 @@ package cmd
 import (
 	"bufio"
 	"io/ioutil"
-	"log"
 	"os"
 	"strings"
 
@@ -26,55 +25,36 @@ var RootCmd = &cobra.Command{
   Requires flag: --log (file path)`,
 }
 
-func Parse() []reader.LogEntry {
-
-	file, err := OpenLog(logName)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	renderFile, err := RenderDoc(file)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	entries, err := UnmarshalLines(renderFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return entries
-}
-
 //OpenLog opens log file
 func OpenLog(filepath string) (*os.File, error) {
 	return os.Open(filepath)
 }
 
 //RenderDoc removes blocks and spaces to prep doc for parse
-func RenderDoc(file *os.File) (*os.File, error) {
+func RenderDoc(file *os.File, name string) (string, error) {
 	var err error
 
-	fileStat, err := file.Stat()
-	if err != nil {
-		return nil, err
+	renderName := "rendered"
+
+	splitName := strings.Split(name, `/`)
+
+	for _, word := range splitName {
+		renderName = renderName + "_" + word
+
 	}
 
-	name := fileStat.Name()
-	renderName := "rendered_" + name
-
 	if _, err := os.Stat("./" + renderName); err == nil {
-		return os.OpenFile(renderName, os.O_RDWR|os.O_APPEND, 0600)
+		return renderName, err
 	}
 
 	err = ioutil.WriteFile(renderName, nil, 0600)
 	if err != nil {
-		return nil, err
+		return renderName, err
 	}
 
 	renderFile, err := os.OpenFile(renderName, os.O_RDWR|os.O_APPEND, 0600)
 	if err != nil {
-		return nil, err
+		return renderName, err
 	}
 
 	scanner := bufio.NewScanner(file)
@@ -86,12 +66,12 @@ func RenderDoc(file *os.File) (*os.File, error) {
 			}
 			_, err = renderFile.WriteString(str + "\n")
 			if err != nil {
-				return nil, err
+				return renderName, err
 			}
 		}
 	}
 
-	return os.OpenFile(renderName, os.O_RDWR|os.O_APPEND, 0600)
+	return renderName, err
 }
 
 //UnmarshalLines converts given lines to an array of structs

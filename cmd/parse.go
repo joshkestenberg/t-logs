@@ -48,7 +48,15 @@ var StateCmd = &cobra.Command{
 		date := args[0]
 		time := args[1]
 
-		entries := Parse()
+		file, err := OpenLog(logName)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		entries, err := UnmarshalLines(file)
+		if err != nil {
+			log.Fatal(err)
+		}
 
 		status, err := reader.GetStatus(entries, date, time)
 		if err != nil {
@@ -75,8 +83,15 @@ var MsgsCmd = &cobra.Command{
 			log.Fatal("5 args required: duration in miliseconds (up to 59999), start date (01-01), start time (00:00:00[.000 if you'd like more specificity]), end date, and end time")
 		}
 
-		entries := Parse()
+		file, err := OpenLog(logName)
+		if err != nil {
+			log.Fatal(err)
+		}
 
+		entries, err := UnmarshalLines(file)
+		if err != nil {
+			log.Fatal(err)
+		}
 		dur, err := strconv.Atoi(args[0])
 		if err != nil {
 			log.Fatal(err)
@@ -97,13 +112,29 @@ var MsgsCmd = &cobra.Command{
 var NodesCmd = &cobra.Command{
 	Use:   "nodes",
 	Short: "Outputs nodes.json",
-	Long: `Given a cluster of nodes' log files, nodes generates a json file with each node's name, ip, pubkey, and bit array index.
+	Long: `Given a cluster of nodes' log files, nodes generates a json file with each node's name, ip, pubkey, and bit array index, and then renders a t-logs readable log file for each given log entitled "rendered_[log name...]".
   Note: log files must be given for all validator nodes reflected in logs.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) == 0 {
 			log.Fatal("You must input log files for all validator nodes")
 		}
 
-		reader.GetPeers(args)
+		var names []string
+
+		for _, arg := range args {
+			openFile, err := OpenLog(arg)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			name, err := RenderDoc(openFile, arg)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			names = append(names, name)
+		}
+
+		reader.GetPeers(names)
 	},
 }
