@@ -1,12 +1,8 @@
 package reader
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
-	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -34,174 +30,55 @@ type Status struct {
 	XPreCommits []string
 }
 
-type Peer struct {
+type Node struct {
 	Name   string `json:"name"`
 	Ip     string `json:"ip"`
 	Pubkey string `json:"pubkey"`
 	Index  string `json:"index"`
 }
 
-func GetPeers(filenames []string) error {
-	var str string
-	var err error
-	var peers []Peer
-
-	for _, filename := range filenames {
-		file, err := os.Open(filename)
-		if err != nil {
-			return err
-		}
-
-		peer := Peer{}
-
-		peer.Name = filename
-
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			if peer.Index != "" && peer.Ip != "" && peer.Name != "" && peer.Pubkey != "" {
-				peers = append(peers, peer)
-				break
-			} else {
-				str = scanner.Text()
-				entry, err := UnmarshalLine(str)
-
-				if entry.Descrip == "Starting DefaultListener" {
-					ip := strings.Split(entry.Other["impl"], "@")[1]
-					ip = strings.Split(ip, ":")[0]
-					peer.Ip = ip
-				} else if strings.Contains(entry.Descrip, "turn to propose") {
-					pubkey := strings.Split(entry.Other["privValidator"], "{")[1]
-					peer.Pubkey = pubkey[:12]
-				} else if peer.Pubkey != "" && strings.Contains(entry.Descrip, "pushed vote") && strings.Contains(entry.Other["vote"], peer.Pubkey) {
-					index := strings.Split(entry.Other["vote"], "{")[1]
-					peer.Index = strings.Split(index, ":")[0]
-				}
-
-				if err = scanner.Err(); err != nil {
-					return err
-				}
-			}
-		}
+func (peer *Node) IsComplete() bool {
+	if peer.Index != "" && peer.Ip != "" && peer.Name != "" && peer.Pubkey != "" {
+		return true
 	}
-
-	err = ioutil.WriteFile("nodes.json", nil, 0600)
-	if err != nil {
-		return err
-	}
-
-	file, err := os.OpenFile("nodes.json", os.O_RDWR|os.O_APPEND, 0600)
-	if err != nil {
-		return err
-	}
-
-	err = MarshalJSON(peers, file)
-
-	return err
+	return false
 }
 
-//UnmarshalLine takes one line at a time and outputs a struct
-func UnmarshalLine(line string) (LogEntry, error) {
-	var entry LogEntry
-	var err error
+func (peer *Node) Populate(entry LogEntry, name string) {
+	if peer.Name != name {
+		peer.Name = name
+	}
 
-	//parse for level
-	levelParse := strings.SplitAfterN(line, "[", 2)
-	entry.Level = strings.Replace(levelParse[0], "[", "", 1)
+	if entry.Descrip == "Starting DefaultListener" {
+		ip := strings.Split(entry.Other["impl"], "@")[1]
+		ip = strings.Split(ip, ":")[0]
+		peer.Ip = ip
+	} else if strings.Contains(entry.Descrip, "turn to propose") {
+		pubkey := strings.Split(entry.Other["privValidator"], "{")[1]
+		peer.Pubkey = pubkey[:12]
+	} else if peer.Pubkey != "" && strings.Contains(entry.Descrip, "pushed vote") && strings.Contains(entry.Other["vote"], peer.Pubkey) {
+		index := strings.Split(entry.Other["vote"], "{")[1]
+		peer.Index = strings.Split(index, ":")[0]
+	}
+}
 
-	//parse for date and time
-	datetimeParse := strings.SplitAfterN(levelParse[1], "]", 2)
-
-	entry.Date = strings.Split(datetimeParse[0], "|")[0]
-	entry.Time = strings.Replace(strings.Split(datetimeParse[0], "|")[1], "]", "", 1)
-
-	//parse for descrip
-	descripParse := strings.Split(datetimeParse[1], "module")
-	descrip := descripParse[0]
-
-	//if the line describes a block, it needs to be specially processed
-	if strings.Contains(descrip, "Block{") {
-		entry.Module = "consensus"
-
-		if strings.Contains(descrip, "Signed proposal block") {
-			entry.Descrip = "Signed proposal block: Block{}"
-		} else {
-			entry.Descrip = "Block{}"
-		}
-		return entry, err
+func (peer *Node) Save(nodes []Node) ([]Node, bool) {
+	if peer.IsComplete() {
+		nodes = append(nodes, *peer)
+		return nodes, true
 	} else {
-		//set Descrip
-		entry.Descrip = strings.TrimSpace(descrip)
+		return nodes, false
 	}
-
-	//parse for all other entries
-	mapParse := strings.Split(descripParse[1], "=")[1:]
-	//set key to module for first iteration of loop (always module) and create empty map
-	key := "module"
-	m := make(map[string]string)
-
-	//iterate over other entries and add them to map
-	for _, element := range mapParse {
-		var valKey []string
-
-		if strings.Contains(element, `"`) {
-			valKey = strings.Split(element, `"`)[1:]
-		} else {
-			valKey = strings.SplitN(element, " ", 2)
-		}
-
-		//set Value
-		value := strings.TrimSpace(valKey[0])
-
-		if key == "module" && len(valKey) > 1 {
-			entry.Module = value
-			key = strings.TrimSpace(valKey[1])
-		} else if key == "module" {
-			entry.Module = value
-		} else if key != "module" && len(valKey) > 1 {
-			m[key] = value
-			key = strings.TrimSpace(valKey[1])
-		} else if key != "module" {
-			m[key] = value
-		}
-	}
-
-	// add map to entry struct
-	entry.Other = m
-
-	return entry, err
-}
-
-func MarshalJSON(peers []Peer, file *os.File) error {
-	var err error
-
-	for i := 0; i < len(peers); i++ {
-		peer, err := json.Marshal(peers[i])
-		if err != nil {
-			return err
-		}
-
-		_, err = file.WriteString(string(peer) + "\n")
-		if err != nil {
-			return err
-		}
-	}
-
-	return err
 }
 
 //GetStatus parses log entries for relevant data (see below for all relevant fucntions)
-func GetStatus(entries []LogEntry, date string, time string) (Status, error) {
+func GetStatus(entries []LogEntry, nodes []Node, date string, time string) (Status, error) {
 	var err error
 	var status Status
 	var bpArr []string
 	var watch = false
 
 	status.Proposal = "no"
-
-	peers, err := findPeers()
-	if err != nil {
-		return status, err
-	}
 
 	myIP := findMyIP(entries)
 
@@ -214,9 +91,10 @@ func GetStatus(entries []LogEntry, date string, time string) (Status, error) {
 		if watch == true && !strings.Contains(entry.Time, time) {
 			break
 		}
+		//
 
 		if strings.Contains(entry.Descrip, "enter") && !strings.Contains(entry.Descrip, "Invalid") && !strings.Contains(entry.Descrip, "Wait") {
-			status, err = newStep(status, entry, peers)
+			status, err = newStep(status, entry, nodes)
 			if err != nil {
 				return status, err
 			}
@@ -237,21 +115,21 @@ func GetStatus(entries []LogEntry, date string, time string) (Status, error) {
 		}
 
 		if entry.Descrip == "Receive" && strings.Contains(entry.Other["msg"], "Vote Vote") {
-			status, err = checkVotes(status, entry, peers)
+			status, err = checkVotes(status, entry, nodes)
 			if err != nil {
 				return status, err
 			}
 		}
 
 		if entry.Descrip == "Signed and pushed vote" {
-			status, err = checkMyVote(status, entry, myIP, peers)
+			status, err = checkMyVote(status, entry, myIP, nodes)
 			if err != nil {
 				return status, err
 			}
 		}
 
 		if strings.Contains(entry.Descrip, "Picked") && strings.Contains(entry.Descrip, "Pre") {
-			status, err = checkExpected(status, entry, peers, myIP)
+			status, err = checkExpected(status, entry, nodes, myIP)
 			if err != nil {
 				return status, err
 			}
@@ -260,199 +138,10 @@ func GetStatus(entries []LogEntry, date string, time string) (Status, error) {
 	return status, err
 }
 
-func GetMessages(entries []LogEntry, dur int, stD string, stT string, enD string, enT string, order bool, commits bool) error {
-	var trackTime int
-	var prevMinute int
-	var prevHour int
-	var prevMonth int
-	var prevDay int
-	var parse bool
-	var watch bool
-	var err error
-	var prvTime int
-
-	first := true
-
-	peers, err := findPeers()
-	if err != nil {
-		return err
-	}
-
-	var msgs []string
-
-	myIp := findMyIP(entries)
-
-	for i := 0; i < len(peers); i++ {
-		msgs = append(msgs, "_")
-	}
-
-	for _, entry := range entries {
-		if entry.Date == stD && strings.Contains(entry.Time, stT) && parse == false {
-			parse = true
-		}
-
-		if entry.Date == enD && strings.Contains(entry.Time, enT) {
-			watch = true
-		}
-
-		if watch == true && !strings.Contains(entry.Time, enT) {
-			fmt.Println(entry.Time, msgs)
-			break
-		}
-
-		if parse == true {
-			tParse := strings.Split(entry.Time, ":")
-			timeParse := strings.Split(tParse[2], ".")
-			mili := timeParse[0] + timeParse[1]
-
-			minute, err := strconv.Atoi(tParse[1])
-			if err != nil {
-				return err
-			}
-			hour, err := strconv.Atoi(tParse[0])
-			if err != nil {
-				return err
-			}
-
-			dateParse := strings.Split(entry.Date, "-")
-			month, err := strconv.Atoi(dateParse[0])
-			if err != nil {
-				return err
-			}
-			day, err := strconv.Atoi(dateParse[1])
-			if err != nil {
-				return err
-			}
-
-			time, err := strconv.Atoi(mili)
-			if err != nil {
-				return err
-			}
-
-			if first == true {
-				trackTime = time
-				prevMinute = minute
-				first = false
-			} else if time < prvTime && order == true {
-				fmt.Println(entry.Time, "ERROR: LOGS OUT OF ORDER")
-			}
-
-			//this if/else statement determines when to return a statement, accounting for the turnover of minutes, hours, days, months, years
-			if (time > trackTime && (time-trackTime) >= dur) || (time < trackTime && (60000-trackTime+time) >= dur) { //duration elapses normally
-				fmt.Println(entry.Time, msgs)
-				//update trackers
-				trackTime = time
-				prevMinute = minute
-				prevHour = hour
-				prevDay = day
-				prevMonth = month
-				//reset peers
-				for i := 0; i < len(peers); i++ {
-					msgs[i] = "_"
-				}
-			} else if (minute == (prevMinute+1) && time > trackTime) || minute >= (prevMinute+2) { //minute rolls over
-				fmt.Println(entry.Time, msgs)
-				//update trackers
-				trackTime = time
-				prevMinute = minute
-				prevHour = hour
-				prevDay = day
-				prevMonth = month
-				//reset peers
-				for i := 0; i < len(peers); i++ {
-					msgs[i] = "_"
-				}
-			} else if hour == (prevHour+1) && ((60000-trackTime+time) >= dur || time > trackTime) { //hour rolls over
-				fmt.Println(entry.Time, msgs)
-				//update trackers
-				trackTime = time
-				prevMinute = minute
-				prevHour = hour
-				prevDay = day
-				prevMonth = month
-				//reset peers
-				for i := 0; i < len(peers); i++ {
-					msgs[i] = "_"
-				}
-			} else if day == (prevDay+1) && ((60000-trackTime+time) >= dur || time > trackTime) { //day rolls over
-				fmt.Println(entry.Time, msgs)
-				//update trackers
-				trackTime = time
-				prevMinute = minute
-				prevHour = hour
-				prevDay = day
-				prevMonth = month
-				//reset peers
-				for i := 0; i < len(peers); i++ {
-					msgs[i] = "_"
-				}
-			} else if (month == (prevMonth+1) || month < prevMonth) && ((60000-trackTime+time) >= dur || time > trackTime) { //month rolls over
-				fmt.Println(entry.Time, msgs)
-				//update trackers
-				trackTime = time
-				prevMinute = minute
-				prevHour = hour
-				prevDay = day
-				prevMonth = month
-				//reset peers
-				for i := 0; i < len(peers); i++ {
-					msgs[i] = "_"
-				}
-			} else if reflect.DeepEqual(entry, entries[len(entries)-1]) { //log ends
-				fmt.Println(entry.Time, msgs)
-			}
-
-			//processing logic for received msgs
-
-			if entry.Descrip == "Receive" {
-
-				peerParse := strings.Split(entry.Other["src"], "}")[0]
-				ipParse := strings.Split(peerParse, "{")[2]
-				ipParse = strings.Split(ipParse, ":")[0]
-
-				for _, peer := range peers {
-
-					index, err := strconv.Atoi(peer.Index)
-					if err != nil {
-						return err
-					}
-
-					if ipParse == peer.Ip {
-						msgs[index] = "X"
-						break
-					}
-				}
-			} else if strings.Contains(entry.Descrip, "pushed") || strings.Contains(entry.Descrip, "Picked") {
-				for _, peer := range peers {
-
-					index, err := strconv.Atoi(peer.Index)
-					if err != nil {
-						return err
-					}
-
-					if myIp == peer.Ip {
-						msgs[index] = "O"
-						break
-					}
-				}
-			}
-
-			//processing for block commits
-			if entry.Descrip == "Block{}" && commits == true {
-				fmt.Println(entry.Time, "Block committed")
-			}
-
-			//set prvTime
-			prvTime = time
-		}
-	}
-	return err
-}
-
-//BELOW FUNCTIONS BELONG TO getStatus ^^
+//*********************************************************************following functions belong to GetStatus***********************************************
 
 //check for new round; set HRS, and reset votes if new round
-func newStep(status Status, entry LogEntry, peers []Peer) (Status, error) {
+func newStep(status Status, entry LogEntry, nodes []Node) (Status, error) {
 	var err error
 
 	descrip := entry.Descrip
@@ -484,7 +173,7 @@ func newStep(status Status, entry LogEntry, peers []Peer) (Status, error) {
 		status.PreCommits = status.PreCommits[:0]
 		status.XPreCommits = status.XPreCommits[:0]
 
-		for i := 0; i < len(peers); i++ {
+		for i := 0; i < len(nodes); i++ {
 			status.PreVotes = append(status.PreVotes, "_")
 			status.XPreVotes = append(status.XPreVotes, "_")
 			status.PreCommits = append(status.PreCommits, "_")
@@ -542,7 +231,7 @@ func checkBlock(status Status, entry LogEntry, bpArr []string) (Status, []string
 }
 
 //add unique votes from validators
-func checkVotes(status Status, entry LogEntry, peers []Peer) (Status, error) {
+func checkVotes(status Status, entry LogEntry, nodes []Node) (Status, error) {
 	var err error
 
 	vote := entry.Other["msg"]
@@ -563,7 +252,7 @@ func checkVotes(status Status, entry LogEntry, peers []Peer) (Status, error) {
 		}
 
 		if height == status.Height && round == status.Round {
-			for _, peer := range peers {
+			for _, peer := range nodes {
 
 				index, err := strconv.Atoi(peer.Index)
 				if err != nil {
@@ -598,7 +287,7 @@ func checkVotes(status Status, entry LogEntry, peers []Peer) (Status, error) {
 		}
 
 		if height == status.Height && round == status.Round {
-			for _, peer := range peers {
+			for _, peer := range nodes {
 				index, err := strconv.Atoi(peer.Index)
 				if err != nil {
 					return status, err
@@ -619,7 +308,7 @@ func checkVotes(status Status, entry LogEntry, peers []Peer) (Status, error) {
 	return status, err
 }
 
-func checkMyVote(status Status, entry LogEntry, myIP string, peers []Peer) (Status, error) {
+func checkMyVote(status Status, entry LogEntry, myIP string, nodes []Node) (Status, error) {
 	var err error
 	voteHeight, err := strconv.Atoi(entry.Other["height"])
 	if err != nil {
@@ -631,7 +320,7 @@ func checkMyVote(status Status, entry LogEntry, myIP string, peers []Peer) (Stat
 		log.Fatal(err)
 	}
 
-	for _, peer := range peers {
+	for _, peer := range nodes {
 
 		index, err := strconv.Atoi(peer.Index)
 		if err != nil {
@@ -666,10 +355,10 @@ func checkMyVote(status Status, entry LogEntry, myIP string, peers []Peer) (Stat
 	return status, err
 }
 
-func checkExpected(status Status, entry LogEntry, peers []Peer, myIP string) (Status, error) {
+func checkExpected(status Status, entry LogEntry, nodes []Node, myIP string) (Status, error) {
 	var err error
 
-	for _, peer := range peers {
+	for _, peer := range nodes {
 
 		index, err := strconv.Atoi(peer.Index)
 		if err != nil {
@@ -691,33 +380,179 @@ func checkExpected(status Status, entry LogEntry, peers []Peer, myIP string) (St
 	return status, err
 }
 
-//*****************************************************************************
+//*****************************************************************************end of GetStatus functions*************************************************
 
-//findPeers reads in a peer file and creates an array of peer structs
-func findPeers() ([]Peer, error) {
-	var peers []Peer
-	var peer Peer
+func GetMessages(entries []LogEntry, nodes []Node, dur int, stD string, stT string, enD string, enT string, order bool, commits bool) error {
+	var trackers = make(map[string]int)
+	var prevTime int
+	var parse bool
+	var watch bool
+	var err error
 
-	file, err := os.Open("nodes.json")
-	if err != nil {
-		return peers, err
+	first := true
+
+	lenNodes := len(nodes)
+
+	var msgs []string
+
+	myIp := findMyIP(entries)
+
+	for i := 0; i < len(nodes); i++ {
+		msgs = append(msgs, "_")
 	}
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		str := scanner.Text()
+	for _, entry := range entries {
+		if entry.Date == stD && strings.Contains(entry.Time, stT) && parse == false {
+			parse = true
+		}
 
-		byteStr := []byte(str)
+		if entry.Date == enD && strings.Contains(entry.Time, enT) {
+			watch = true
+		}
 
-		json.Unmarshal(byteStr, &peer)
+		if watch == true && !strings.Contains(entry.Time, enT) {
+			fmt.Println(entry.Time, msgs)
+			break
+		}
 
-		peers = append(peers, peer)
+		if parse == true {
+			tParse := strings.Split(entry.Time, ":")
+			timeParse := strings.Split(tParse[2], ".")
+			mili := timeParse[0] + timeParse[1]
+
+			minute, err := strconv.Atoi(tParse[1])
+			if err != nil {
+				return err
+			}
+			hour, err := strconv.Atoi(tParse[0])
+			if err != nil {
+				return err
+			}
+
+			dateParse := strings.Split(entry.Date, "-")
+			month, err := strconv.Atoi(dateParse[0])
+			if err != nil {
+				return err
+			}
+			day, err := strconv.Atoi(dateParse[1])
+			if err != nil {
+				return err
+			}
+
+			time, err := strconv.Atoi(mili)
+			if err != nil {
+				return err
+			}
+
+			if first == true {
+				trackers = updateParams(trackers, time, minute, hour, day, month)
+				first = false
+			} else if time < prevTime && order == true {
+				//if order flag is added
+				fmt.Println(entry.Time, "ERROR: LOGS OUT OF ORDER")
+			}
+
+			//this if/else statement determines when to return a statement, accounting for the turnover of minutes, hours, days, months, years
+			if (time > trackers["trackTime"] && (time-trackers["trackTime"]) >= dur) || (time < trackers["trackTime"] && (60000-trackers["trackTime"]+time) >= dur) { //duration elapses normally
+				trackers, msgs = printAndReset(trackers, msgs, entry, time, minute, hour, day, month, lenNodes)
+
+			} else if (minute == (trackers["prevMinute"]+1) && time > trackers["trackTime"]) || minute >= (trackers["prevMinute"]+2) { //minute rolls over
+				trackers, msgs = printAndReset(trackers, msgs, entry, time, minute, hour, day, month, lenNodes)
+
+			} else if hour == (trackers["prevHour"]+1) && ((60000-trackers["trackTime"]+time) >= dur || time > trackers["trackTime"]) { //hour rolls over
+				trackers, msgs = printAndReset(trackers, msgs, entry, time, minute, hour, day, month, lenNodes)
+
+			} else if day == (trackers["prevDay"]+1) && ((60000-trackers["trackTime"]+time) >= dur || time > trackers["trackTime"]) { //day rolls over
+				trackers, msgs = printAndReset(trackers, msgs, entry, time, minute, hour, day, month, lenNodes)
+
+			} else if (month == (trackers["prevMonth"]+1) || month < trackers["prevMonth"]) && ((60000-trackers["trackTime"]+time) >= dur || time > trackers["trackTime"]) { //month rolls over
+				trackers, msgs = printAndReset(trackers, msgs, entry, time, minute, hour, day, month, lenNodes)
+
+			} else if reflect.DeepEqual(entry, entries[len(entries)-1]) { //log ends
+				fmt.Println(entry.Time, msgs)
+			}
+
+			//processing logic for received msgs
+
+			if entry.Descrip == "Receive" {
+
+				peerParse := strings.Split(entry.Other["src"], "}")[0]
+				ipParse := strings.Split(peerParse, "{")[2]
+				ipParse = strings.Split(ipParse, ":")[0]
+
+				for _, peer := range nodes {
+
+					index, err := strconv.Atoi(peer.Index)
+					if err != nil {
+						return err
+					}
+
+					if ipParse == peer.Ip {
+						msgs[index] = "X"
+						break
+					}
+				}
+			} else if strings.Contains(entry.Descrip, "pushed") || strings.Contains(entry.Descrip, "Picked") {
+				for _, peer := range nodes {
+
+					index, err := strconv.Atoi(peer.Index)
+					if err != nil {
+						return err
+					}
+
+					if myIp == peer.Ip {
+						msgs[index] = "O"
+						break
+					}
+				}
+			}
+
+			//processing for block commits
+			if entry.Descrip == "Block{}" && commits == true {
+				fmt.Println(entry.Time, "Block committed")
+			}
+
+			//set prevTime
+			prevTime = time
+		}
 	}
-
-	return peers, err
+	return err
 }
 
-//findMyIP parses a verbose log and pulls out the current node's IP
+//*********************************************************************following functions belong to GetMsgs***********************************************
+
+//prints msgs to console, updates time parameters, resets msgs array
+func printAndReset(trackers map[string]int, msgs []string, entry LogEntry, time int, minute int, hour int, day int, month int, lenNodes int) (map[string]int, []string) {
+	//print to command line
+	fmt.Println(entry.Time, msgs)
+
+	//update trackers
+	trackers = updateParams(trackers, time, minute, hour, day, month)
+
+	//reset msgs
+	for i := 0; i < lenNodes; i++ {
+		msgs[i] = "_"
+	}
+
+	return trackers, msgs
+}
+
+//updates time after checking how much has elapsed
+func updateParams(trackers map[string]int, time int, minute int, hour int, day int, month int) map[string]int {
+	trackers["trackTime"] = time
+	trackers["prevMinute"] = minute
+	trackers["prevHour"] = hour
+	trackers["prevDay"] = day
+	trackers["prevMonth"] = month
+
+	return trackers
+}
+
+//*****************************************************************************end of GetStatus functions*************************************************
+
+//*******************************************************************following functions are called in multiple contexts**********************************
+
+//findMyIP finds the current node's IP
 func findMyIP(entries []LogEntry) string {
 	var ip string
 
@@ -731,5 +566,3 @@ func findMyIP(entries []LogEntry) string {
 	}
 	return ip
 }
-
-//*****************************************************************************

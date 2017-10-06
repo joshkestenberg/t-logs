@@ -5,6 +5,7 @@ import (
 	"log"
 	"strconv"
 
+	"github.com/joshkestenberg/t-logs/filefuncs"
 	"github.com/joshkestenberg/t-logs/reader"
 
 	"github.com/spf13/cobra"
@@ -48,17 +49,22 @@ var StateCmd = &cobra.Command{
 		date := args[0]
 		time := args[1]
 
-		file, err := OpenLog(logName)
+		file, err := filefuncs.OpenLog(logName)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		entries, err := UnmarshalLines(file)
+		entries, err := filefuncs.UnmarshalLines(file)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		status, err := reader.GetStatus(entries, date, time)
+		nodes, err := filefuncs.UnmarshalNodes()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		status, err := reader.GetStatus(entries, nodes, date, time)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -83,12 +89,12 @@ var MsgsCmd = &cobra.Command{
 			log.Fatal("5 args required: duration in miliseconds (up to 59999), start date (01-01), start time (00:00:00[.000 if you'd like more specificity]), end date, and end time")
 		}
 
-		file, err := OpenLog(logName)
+		file, err := filefuncs.OpenLog(logName)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		entries, err := UnmarshalLines(file)
+		entries, err := filefuncs.UnmarshalLines(file)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -102,7 +108,12 @@ var MsgsCmd = &cobra.Command{
 		enD := args[3]
 		enT := args[4]
 
-		err = reader.GetMessages(entries, dur, stD, stT, enD, enT, *order, *commits)
+		nodes, err := filefuncs.UnmarshalNodes()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		err = reader.GetMessages(entries, nodes, dur, stD, stT, enD, enT, *order, *commits)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -122,12 +133,12 @@ var NodesCmd = &cobra.Command{
 		var names []string
 
 		for _, arg := range args {
-			openFile, err := OpenLog(arg)
+			openFile, err := filefuncs.OpenLog(arg)
 			if err != nil {
 				log.Fatal(err)
 			}
 
-			name, err := RenderDoc(openFile, arg)
+			name, err := filefuncs.RenderDoc(openFile, arg)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -135,6 +146,6 @@ var NodesCmd = &cobra.Command{
 			names = append(names, name)
 		}
 
-		reader.GetPeers(names)
+		filefuncs.GetNodes(names)
 	},
 }
