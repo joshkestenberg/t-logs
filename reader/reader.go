@@ -37,34 +37,34 @@ type Node struct {
 	Index  string `json:"index"`
 }
 
-func (peer *Node) IsComplete() bool {
-	if peer.Index != "" && peer.Ip != "" && peer.Name != "" && peer.Pubkey != "" {
+func (node *Node) IsComplete() bool {
+	if node.Index != "" && node.Ip != "" && node.Name != "" && node.Pubkey != "" {
 		return true
 	}
 	return false
 }
 
-func (peer *Node) Populate(entry LogEntry, name string) {
-	if peer.Name != name {
-		peer.Name = name
+func (node *Node) Populate(entry LogEntry, name string) {
+	if node.Name != name {
+		node.Name = name
 	}
 
 	if entry.Descrip == "Starting DefaultListener" {
 		ip := strings.Split(entry.Other["impl"], "@")[1]
 		ip = strings.Split(ip, ":")[0]
-		peer.Ip = ip
+		node.Ip = ip
 	} else if strings.Contains(entry.Descrip, "turn to propose") {
 		pubkey := strings.Split(entry.Other["privValidator"], "{")[1]
-		peer.Pubkey = pubkey[:12]
-	} else if peer.Pubkey != "" && strings.Contains(entry.Descrip, "pushed vote") && strings.Contains(entry.Other["vote"], peer.Pubkey) {
+		node.Pubkey = pubkey[:12]
+	} else if node.Pubkey != "" && strings.Contains(entry.Descrip, "pushed vote") && strings.Contains(entry.Other["vote"], node.Pubkey) {
 		index := strings.Split(entry.Other["vote"], "{")[1]
-		peer.Index = strings.Split(index, ":")[0]
+		node.Index = strings.Split(index, ":")[0]
 	}
 }
 
-func (peer *Node) Save(nodes []Node) ([]Node, bool) {
-	if peer.IsComplete() {
-		nodes = append(nodes, *peer)
+func (node *Node) Save(nodes []Node) ([]Node, bool) {
+	if node.IsComplete() {
+		nodes = append(nodes, *node)
 		return nodes, true
 	} else {
 		return nodes, false
@@ -252,14 +252,14 @@ func checkVotes(status Status, entry LogEntry, nodes []Node) (Status, error) {
 		}
 
 		if height == status.Height && round == status.Round {
-			for _, peer := range nodes {
+			for _, node := range nodes {
 
-				index, err := strconv.Atoi(peer.Index)
+				index, err := strconv.Atoi(node.Index)
 				if err != nil {
 					return status, err
 				}
 
-				if strings.Contains(entry.Other["msg"], peer.Pubkey) {
+				if strings.Contains(entry.Other["msg"], node.Pubkey) {
 					if strings.Contains(entry.Other["msg"], "00000000") {
 						status.PreVotes[index] = "Y"
 						break
@@ -287,13 +287,13 @@ func checkVotes(status Status, entry LogEntry, nodes []Node) (Status, error) {
 		}
 
 		if height == status.Height && round == status.Round {
-			for _, peer := range nodes {
-				index, err := strconv.Atoi(peer.Index)
+			for _, node := range nodes {
+				index, err := strconv.Atoi(node.Index)
 				if err != nil {
 					return status, err
 				}
 
-				if strings.Contains(entry.Other["msg"], peer.Pubkey) {
+				if strings.Contains(entry.Other["msg"], node.Pubkey) {
 					if strings.Contains(entry.Other["msg"], "00000000") {
 						status.PreCommits[index] = "Y"
 						break
@@ -320,14 +320,14 @@ func checkMyVote(status Status, entry LogEntry, myIP string, nodes []Node) (Stat
 		log.Fatal(err)
 	}
 
-	for _, peer := range nodes {
+	for _, node := range nodes {
 
-		index, err := strconv.Atoi(peer.Index)
+		index, err := strconv.Atoi(node.Index)
 		if err != nil {
 			return status, err
 		}
 
-		if peer.Ip == myIP && voteHeight == status.Height && voteRound == status.Round {
+		if node.Ip == myIP && voteHeight == status.Height && voteRound == status.Round {
 			if strings.Contains(entry.Other["vote"], "Prevote") {
 				if strings.Contains(entry.Other["vote"], "00000000") {
 					status.PreVotes[index] = "N"
@@ -358,20 +358,20 @@ func checkMyVote(status Status, entry LogEntry, myIP string, nodes []Node) (Stat
 func checkExpected(status Status, entry LogEntry, nodes []Node, myIP string) (Status, error) {
 	var err error
 
-	for _, peer := range nodes {
+	for _, node := range nodes {
 
-		index, err := strconv.Atoi(peer.Index)
+		index, err := strconv.Atoi(node.Index)
 		if err != nil {
 			return status, err
 		}
 
 		if strings.Contains(entry.Descrip, "Prevotes") {
-			if strings.Contains(entry.Other["peer"], peer.Ip) {
+			if strings.Contains(entry.Other["node"], node.Ip) {
 				status.XPreVotes[index] = "X"
 				break
 			}
 		} else if strings.Contains(entry.Descrip, "Precommits") {
-			if strings.Contains(entry.Other["peer"], peer.Ip) {
+			if strings.Contains(entry.Other["node"], node.Ip) {
 				status.XPreCommits[index] = "X"
 				break
 			}
@@ -476,31 +476,31 @@ func GetMessages(entries []LogEntry, nodes []Node, dur int, stD string, stT stri
 
 			if entry.Descrip == "Receive" {
 
-				peerParse := strings.Split(entry.Other["src"], "}")[0]
-				ipParse := strings.Split(peerParse, "{")[2]
+				nodeParse := strings.Split(entry.Other["src"], "}")[0]
+				ipParse := strings.Split(nodeParse, "{")[2]
 				ipParse = strings.Split(ipParse, ":")[0]
 
-				for _, peer := range nodes {
+				for _, node := range nodes {
 
-					index, err := strconv.Atoi(peer.Index)
+					index, err := strconv.Atoi(node.Index)
 					if err != nil {
 						return err
 					}
 
-					if ipParse == peer.Ip {
+					if ipParse == node.Ip {
 						msgs[index] = "X"
 						break
 					}
 				}
 			} else if strings.Contains(entry.Descrip, "pushed") || strings.Contains(entry.Descrip, "Picked") {
-				for _, peer := range nodes {
+				for _, node := range nodes {
 
-					index, err := strconv.Atoi(peer.Index)
+					index, err := strconv.Atoi(node.Index)
 					if err != nil {
 						return err
 					}
 
-					if myIp == peer.Ip {
+					if myIp == node.Ip {
 						msgs[index] = "O"
 						break
 					}
