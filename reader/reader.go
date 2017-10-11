@@ -78,7 +78,7 @@ func GetStatus(entries []LogEntry, nodes []Node, date string, time string) (Stat
 	var bpArr []string
 	var watch = false
 
-	status.Proposal = "no"
+	status.Proposal = "No"
 
 	myIP := findMyIP(entries)
 
@@ -166,12 +166,12 @@ func newStep(status Status, entry LogEntry, nodes []Node) (Status, error) {
 
 		status.Proposal = "No"
 
-		status.BlockParts = status.BlockParts[:0]
+		status.BlockParts = []string{}
 
-		status.PreVotes = status.PreVotes[:0]
-		status.XPreVotes = status.XPreVotes[:0]
-		status.PreCommits = status.PreCommits[:0]
-		status.XPreCommits = status.XPreCommits[:0]
+		status.PreVotes = []string{}
+		status.XPreVotes = []string{}
+		status.PreCommits = []string{}
+		status.XPreCommits = []string{}
 
 		for i := 0; i < len(nodes); i++ {
 			status.PreVotes = append(status.PreVotes, "_")
@@ -199,12 +199,12 @@ func checkProp(status Status, entry LogEntry) (Status, error) {
 	var err error
 
 	height, err := strconv.Atoi(entry.Other["height"])
-
 	if err != nil {
 		return status, err
 	}
+
 	if height == status.Height {
-		status.Proposal = "yes"
+		status.Proposal = "Yes"
 	}
 
 	return status, err
@@ -366,12 +366,12 @@ func checkExpected(status Status, entry LogEntry, nodes []Node, myIP string) (St
 		}
 
 		if strings.Contains(entry.Descrip, "Prevotes") {
-			if strings.Contains(entry.Other["node"], node.Ip) {
+			if strings.Contains(entry.Other["peer"], node.Ip) {
 				status.XPreVotes[index] = "X"
 				break
 			}
 		} else if strings.Contains(entry.Descrip, "Precommits") {
-			if strings.Contains(entry.Other["node"], node.Ip) {
+			if strings.Contains(entry.Other["peer"], node.Ip) {
 				status.XPreCommits[index] = "X"
 				break
 			}
