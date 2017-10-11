@@ -113,7 +113,7 @@ var MsgsCmd = &cobra.Command{
 			log.Fatal(err)
 		}
 
-		err = reader.GetMessages(entries, nodes, dur, stD, stT, enD, enT, *order, *commits)
+		_, err = reader.GetMessages(entries, nodes, dur, stD, stT, enD, enT, *order, *commits)
 		if err != nil {
 			log.Fatal(err)
 		}

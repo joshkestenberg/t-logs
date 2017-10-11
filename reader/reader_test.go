@@ -7,6 +7,14 @@ import (
 	"github.com/joshkestenberg/t-logs/reader"
 )
 
+var NODES = []reader.Node{
+	reader.Node{"rendered_20170814T043252.000Z_ec2-184-73-145-200.compute-1.amazonaws.com_tendermint.log", "172.31.36.95", "87708B69426D", "2"},
+	reader.Node{"rendered_20170814T043252.000Z_ec2-34-207-122-153.compute-1.amazonaws.com_tendermint.log", "172.31.44.161", "2A3A16F15BEE", "0"},
+	reader.Node{"rendered_20170814T043252.000Z_ec2-52-203-239-89.compute-1.amazonaws.com_tendermint.log", "172.31.39.83", "3D3074F7A7D0", "1"},
+	reader.Node{"rendered_20170814T043252.000Z_ec2-54-152-106-184.compute-1.amazonaws.com_tendermint.log", "172.31.32.72", "E40892926ECF", "4"},
+	reader.Node{"rendered_20170814T043252.000Z_ec2-54-210-163-123.compute-1.amazonaws.com_tendermint.log", "172.31.46.4", "B7AACD67CE2E", "3"},
+}
+
 func TestIsComplete(t *testing.T) {
 	testCases := []struct {
 		node     reader.Node
@@ -87,13 +95,7 @@ func TestSave(t *testing.T) {
 }
 
 func TestGetStatus(t *testing.T) {
-	nodes := []reader.Node{
-		reader.Node{"rendered_20170814T043252.000Z_ec2-184-73-145-200.compute-1.amazonaws.com_tendermint.log", "172.31.36.95", "87708B69426D", "2"},
-		reader.Node{"rendered_20170814T043252.000Z_ec2-34-207-122-153.compute-1.amazonaws.com_tendermint.log", "172.31.44.161", "2A3A16F15BEE", "0"},
-		reader.Node{"rendered_20170814T043252.000Z_ec2-52-203-239-89.compute-1.amazonaws.com_tendermint.log", "172.31.39.83", "3D3074F7A7D0", "1"},
-		reader.Node{"rendered_20170814T043252.000Z_ec2-54-152-106-184.compute-1.amazonaws.com_tendermint.log", "172.31.32.72", "E40892926ECF", "4"},
-		reader.Node{"rendered_20170814T043252.000Z_ec2-54-210-163-123.compute-1.amazonaws.com_tendermint.log", "172.31.46.4", "B7AACD67CE2E", "3"},
-	}
+	nodes := NODES
 
 	testCases := []struct {
 		entries []reader.LogEntry
@@ -190,4 +192,8 @@ func TestGetStatus(t *testing.T) {
 			t.Errorf("expected %s, received %s", testCase.status, status)
 		}
 	}
+}
+
+func TestGetMessages(t *testing.T) {
+
 }

@@ -382,12 +382,16 @@ func checkExpected(status Status, entry LogEntry, nodes []Node, myIP string) (St
 
 //*****************************************************************************end of GetStatus functions*************************************************
 
-func GetMessages(entries []LogEntry, nodes []Node, dur int, stD string, stT string, enD string, enT string, order bool, commits bool) error {
+func GetMessages(entries []LogEntry, nodes []Node, dur int, stD string, stT string, enD string, enT string, order bool, commits bool) ([][]string, error) {
 	var trackers = make(map[string]int)
+	var timeParams = make(map[string]int)
+
 	var prevTime int
 	var parse bool
 	var watch bool
 	var err error
+
+	var msgArr [][]string
 
 	first := true
 
@@ -402,150 +406,204 @@ func GetMessages(entries []LogEntry, nodes []Node, dur int, stD string, stT stri
 	}
 
 	for _, entry := range entries {
+		//check if we should start parsing
 		if entry.Date == stD && strings.Contains(entry.Time, stT) && parse == false {
 			parse = true
 		}
 
+		//check if we've reached end time (continue parsing until this time has passed)
 		if entry.Date == enD && strings.Contains(entry.Time, enT) {
 			watch = true
 		}
 
-		if watch == true && !strings.Contains(entry.Time, enT) {
-			fmt.Println(entry.Time, msgs)
-			break
-		}
-
 		if parse == true {
-			tParse := strings.Split(entry.Time, ":")
-			timeParse := strings.Split(tParse[2], ".")
-			mili := timeParse[0] + timeParse[1]
+			//parse the entry for time parameters
+			timeParams, err = parseEntryTime(timeParams, entry)
 
-			minute, err := strconv.Atoi(tParse[1])
-			if err != nil {
-				return err
-			}
-			hour, err := strconv.Atoi(tParse[0])
-			if err != nil {
-				return err
-			}
-
-			dateParse := strings.Split(entry.Date, "-")
-			month, err := strconv.Atoi(dateParse[0])
-			if err != nil {
-				return err
-			}
-			day, err := strconv.Atoi(dateParse[1])
-			if err != nil {
-				return err
-			}
-
-			time, err := strconv.Atoi(mili)
-			if err != nil {
-				return err
-			}
-
+			//set up our trackers if first log entry read
 			if first == true {
-				trackers = updateParams(trackers, time, minute, hour, day, month)
+				trackers = updateParams(trackers, timeParams)
 				first = false
-			} else if time < prevTime && order == true {
+			} else if timeParams["time"] < prevTime && order == true {
 				//if order flag is added
-				fmt.Println(entry.Time, "ERROR: LOGS OUT OF ORDER")
+				fmt.Println(entry.Time, "ERROR: LOGS OUT OF ORDER\n")
+			}
+
+			//read entry and update msgs
+			msgs, err := getMsg(msgs, entry, nodes, myIp, commits)
+			if err != nil {
+				return msgArr, err
+			}
+
+			//return if parse time has elapsed
+			if watch == true && !strings.Contains(entry.Time, enT) {
+				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
+				return msgArr, err
 			}
 
 			//this if/else statement determines when to return a statement, accounting for the turnover of minutes, hours, days, months, years
-			if (time > trackers["trackTime"] && (time-trackers["trackTime"]) >= dur) || (time < trackers["trackTime"] && (60000-trackers["trackTime"]+time) >= dur) { //duration elapses normally
-				trackers, msgs = printAndReset(trackers, msgs, entry, time, minute, hour, day, month, lenNodes)
+			if normalElapse(timeParams["time"], trackers, dur) {
+				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
 
-			} else if (minute == (trackers["prevMinute"]+1) && time > trackers["trackTime"]) || minute >= (trackers["prevMinute"]+2) { //minute rolls over
-				trackers, msgs = printAndReset(trackers, msgs, entry, time, minute, hour, day, month, lenNodes)
+			} else if nextMinute(timeParams["minute"], trackers, timeParams["time"], dur) {
+				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
 
-			} else if hour == (trackers["prevHour"]+1) && ((60000-trackers["trackTime"]+time) >= dur || time > trackers["trackTime"]) { //hour rolls over
-				trackers, msgs = printAndReset(trackers, msgs, entry, time, minute, hour, day, month, lenNodes)
+			} else if nextHour(timeParams["hour"], trackers, timeParams["time"], dur) {
+				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
 
-			} else if day == (trackers["prevDay"]+1) && ((60000-trackers["trackTime"]+time) >= dur || time > trackers["trackTime"]) { //day rolls over
-				trackers, msgs = printAndReset(trackers, msgs, entry, time, minute, hour, day, month, lenNodes)
+			} else if nextDay(timeParams["day"], trackers, timeParams["time"], dur) {
+				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
 
-			} else if (month == (trackers["prevMonth"]+1) || month < trackers["prevMonth"]) && ((60000-trackers["trackTime"]+time) >= dur || time > trackers["trackTime"]) { //month rolls over
-				trackers, msgs = printAndReset(trackers, msgs, entry, time, minute, hour, day, month, lenNodes)
+			} else if nextMonth(timeParams["month"], trackers, timeParams["time"], dur) {
+				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
 
-			} else if reflect.DeepEqual(entry, entries[len(entries)-1]) { //log ends
+			} else if logEnds(entry, entries) {
 				fmt.Println(entry.Time, msgs)
+				return msgArr, err
 			}
 
-			//processing logic for received msgs
+			//reset prevTime to entry time
+			prevTime = timeParams["time"]
 
-			if entry.Descrip == "Receive" {
-
-				nodeParse := strings.Split(entry.Other["src"], "}")[0]
-				ipParse := strings.Split(nodeParse, "{")[2]
-				ipParse = strings.Split(ipParse, ":")[0]
-
-				for _, node := range nodes {
-
-					index, err := strconv.Atoi(node.Index)
-					if err != nil {
-						return err
-					}
-
-					if ipParse == node.Ip {
-						msgs[index] = "X"
-						break
-					}
-				}
-			} else if strings.Contains(entry.Descrip, "pushed") || strings.Contains(entry.Descrip, "Picked") {
-				for _, node := range nodes {
-
-					index, err := strconv.Atoi(node.Index)
-					if err != nil {
-						return err
-					}
-
-					if myIp == node.Ip {
-						msgs[index] = "O"
-						break
-					}
-				}
-			}
-
-			//processing for block commits
-			if entry.Descrip == "Block{}" && commits == true {
-				fmt.Println(entry.Time, "Block committed")
-			}
-
-			//set prevTime
-			prevTime = time
 		}
 	}
-	return err
+	return msgArr, err
 }
 
 //*********************************************************************following functions belong to GetMsgs***********************************************
 
+func parseEntryTime(timeParams map[string]int, entry LogEntry) (map[string]int, error) {
+
+	var err error
+
+	tParse := strings.Split(entry.Time, ":")
+	timeParse := strings.Split(tParse[2], ".")
+	mili := timeParse[0] + timeParse[1]
+
+	timeParams["minute"], err = strconv.Atoi(tParse[1])
+	if err != nil {
+		return timeParams, err
+	}
+	timeParams["hour"], err = strconv.Atoi(tParse[0])
+	if err != nil {
+		return timeParams, err
+	}
+
+	dateParse := strings.Split(entry.Date, "-")
+	timeParams["month"], err = strconv.Atoi(dateParse[0])
+	if err != nil {
+		return timeParams, err
+	}
+	timeParams["day"], err = strconv.Atoi(dateParse[1])
+	if err != nil {
+		return timeParams, err
+	}
+
+	timeParams["time"], err = strconv.Atoi(mili)
+	if err != nil {
+		return timeParams, err
+	}
+
+	return timeParams, err
+}
+
 //prints msgs to console, updates time parameters, resets msgs array
-func printAndReset(trackers map[string]int, msgs []string, entry LogEntry, time int, minute int, hour int, day int, month int, lenNodes int) (map[string]int, []string) {
+func printAndReset(trackers map[string]int, msgs []string, entry LogEntry, timeParams map[string]int, lenNodes int, msgArr [][]string) (map[string]int, []string, [][]string) {
 	//print to command line
 	fmt.Println(entry.Time, msgs)
 
 	//update trackers
-	trackers = updateParams(trackers, time, minute, hour, day, month)
+	trackers = updateParams(trackers, timeParams)
+
+	//add msgs to array
+	msgArr = append(msgArr, msgs)
 
 	//reset msgs
 	for i := 0; i < lenNodes; i++ {
 		msgs[i] = "_"
 	}
 
-	return trackers, msgs
+	return trackers, msgs, msgArr
 }
 
 //updates time after checking how much has elapsed
-func updateParams(trackers map[string]int, time int, minute int, hour int, day int, month int) map[string]int {
-	trackers["trackTime"] = time
-	trackers["prevMinute"] = minute
-	trackers["prevHour"] = hour
-	trackers["prevDay"] = day
-	trackers["prevMonth"] = month
+func updateParams(trackers map[string]int, timeParams map[string]int) map[string]int {
+	trackers["trackTime"] = timeParams["time"]
+	trackers["prevMinute"] = timeParams["minute"]
+	trackers["prevHour"] = timeParams["hour"]
+	trackers["prevDay"] = timeParams["day"]
+	trackers["prevMonth"] = timeParams["month"]
 
 	return trackers
+}
+
+//processing logic for received msgs
+func getMsg(msgs []string, entry LogEntry, nodes []Node, myIp string, commits bool) ([]string, error) {
+	if entry.Descrip == "Receive" {
+
+		nodeParse := strings.Split(entry.Other["src"], "}")[0]
+		ipParse := strings.Split(nodeParse, "{")[2]
+		ipParse = strings.Split(ipParse, ":")[0]
+
+		for _, node := range nodes {
+
+			index, err := strconv.Atoi(node.Index)
+			if err != nil {
+				return msgs, err
+			}
+
+			if ipParse == node.Ip {
+				msgs[index] = "X"
+				break
+			}
+		}
+	} else if strings.Contains(entry.Descrip, "pushed") || strings.Contains(entry.Descrip, "Picked") {
+		for _, node := range nodes {
+
+			index, err := strconv.Atoi(node.Index)
+			if err != nil {
+				return msgs, err
+			}
+
+			if myIp == node.Ip {
+				msgs[index] = "O"
+				break
+			}
+		}
+	} else if entry.Descrip == "Block{}" && commits == true {
+		return []string{"Block committed"}, nil
+	}
+
+	return msgs, nil
+
+}
+
+func logEnds(entry LogEntry, entries []LogEntry) bool {
+	return reflect.DeepEqual(entry, entries[len(entries)-1])
+}
+
+func nextMonth(month int, trackers map[string]int, time int, dur int) bool {
+	return (month > trackers["prevMonth"] || month < trackers["prevMonth"]) && rolloverElapse(time, trackers, dur)
+}
+
+func nextDay(day int, trackers map[string]int, time int, dur int) bool {
+	return day > trackers["prevDay"] && rolloverElapse(time, trackers, dur)
+}
+
+func nextHour(hour int, trackers map[string]int, time int, dur int) bool {
+	return hour > trackers["prevHour"] && rolloverElapse(time, trackers, dur)
+}
+
+func nextMinute(minute int, trackers map[string]int, time int, dur int) bool {
+	return minute > trackers["prevMinute"] && rolloverElapse(time, trackers, dur)
+}
+
+func normalElapse(time int, trackers map[string]int, dur int) bool {
+	return time > trackers["trackTime"] && (time-trackers["trackTime"]) >= dur
+}
+
+func rolloverElapse(time int, trackers map[string]int, dur int) bool {
+	return ((60000-trackers["trackTime"]+time) >= dur || time > trackers["trackTime"])
 }
 
 //*****************************************************************************end of GetStatus functions*************************************************
