@@ -8,11 +8,11 @@ import (
 )
 
 var NODES = []reader.Node{
-	reader.Node{"rendered_20170814T043252.000Z_ec2-184-73-145-200.compute-1.amazonaws.com_tendermint.log", "172.31.36.95", "87708B69426D", "2"},
 	reader.Node{"rendered_20170814T043252.000Z_ec2-34-207-122-153.compute-1.amazonaws.com_tendermint.log", "172.31.44.161", "2A3A16F15BEE", "0"},
 	reader.Node{"rendered_20170814T043252.000Z_ec2-52-203-239-89.compute-1.amazonaws.com_tendermint.log", "172.31.39.83", "3D3074F7A7D0", "1"},
-	reader.Node{"rendered_20170814T043252.000Z_ec2-54-152-106-184.compute-1.amazonaws.com_tendermint.log", "172.31.32.72", "E40892926ECF", "4"},
+	reader.Node{"rendered_20170814T043252.000Z_ec2-184-73-145-200.compute-1.amazonaws.com_tendermint.log", "172.31.36.95", "87708B69426D", "2"},
 	reader.Node{"rendered_20170814T043252.000Z_ec2-54-210-163-123.compute-1.amazonaws.com_tendermint.log", "172.31.46.4", "B7AACD67CE2E", "3"},
+	reader.Node{"rendered_20170814T043252.000Z_ec2-54-152-106-184.compute-1.amazonaws.com_tendermint.log", "172.31.32.72", "E40892926ECF", "4"},
 }
 
 func TestIsComplete(t *testing.T) {
@@ -195,5 +195,46 @@ func TestGetStatus(t *testing.T) {
 }
 
 func TestGetMessages(t *testing.T) {
+
+	nodes := NODES
+
+	testCases := []struct {
+		entries []reader.LogEntry
+		msgArr  [][]string
+	}{
+		{
+			//assert all nodes register accross different times
+			[]reader.LogEntry{
+				reader.LogEntry{"", "08-14", "00:00:00.000", "Starting DefaultListener", "", map[string]string{"impl": "Listener(@172.31.36.95:46656)"}},
+				reader.LogEntry{"", "08-14", "00:00:00.001", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.44.161:46656} 4F85D81F23AB out}"}},
+				reader.LogEntry{"", "08-14", "00:00:00.002", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.39.83:46656} 1BF7CA4820CD out}"}},
+				reader.LogEntry{"", "08-14", "00:00:00.003", "Signed and pushed vote", "",
+					map[string]string{"height": "1", "round": "0", "vote": "Vote{4:E40892926ECF 1/00/2(Precommit) 000000000000 /C28769ADBAD2.../}"}},
+				reader.LogEntry{"", "08-14", "00:00:00.004", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.46.4:58661} 1BF7CA4820CD out}"}},
+				reader.LogEntry{"", "08-14", "00:00:00.005", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.32.72:46656} D7ECACFDC10F in}"}},
+			},
+			[][]string{
+				{"X", "_", "_", "_", "_"}, {"_", "X", "_", "_", "_"}, {"_", "_", "O", "_", "_"}, {"_", "_", "_", "X", "_"}, {"_", "_", "_", "_", "X"},
+			},
+		},
+		// {
+		// 	[]reader.LogEntry{},
+		// 	[][]string{
+		// 		{}, {}, {},
+		// 	},
+		// },
+	}
+
+	for _, testCase := range testCases {
+
+		msgArr, _ := reader.GetMessages(testCase.entries, nodes, 1, "08-14", "00:00:00.000", "08-14", "00:00:00.005", false, false)
+		if !reflect.DeepEqual(testCase.msgArr, msgArr) {
+			t.Errorf("expected %s, received %s", testCase.msgArr, msgArr)
+		}
+	}
 
 }

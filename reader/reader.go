@@ -406,6 +406,12 @@ func GetMessages(entries []LogEntry, nodes []Node, dur int, stD string, stT stri
 	}
 
 	for _, entry := range entries {
+
+		//reset msgs
+		for i := 0; i < lenNodes; i++ {
+			msgs[i] = "_"
+		}
+
 		//check if we should start parsing
 		if entry.Date == stD && strings.Contains(entry.Time, stT) && parse == false {
 			parse = true
@@ -419,6 +425,10 @@ func GetMessages(entries []LogEntry, nodes []Node, dur int, stD string, stT stri
 		if parse == true {
 			//parse the entry for time parameters
 			timeParams, err = parseEntryTime(timeParams, entry)
+			//return if parse time has elapsed
+			if watch == true && !strings.Contains(entry.Time, enT) {
+				return msgArr, err
+			}
 
 			//set up our trackers if first log entry read
 			if first == true {
@@ -435,8 +445,7 @@ func GetMessages(entries []LogEntry, nodes []Node, dur int, stD string, stT stri
 				return msgArr, err
 			}
 
-			//return if parse time has elapsed
-			if watch == true && !strings.Contains(entry.Time, enT) {
+			if logEnds(entry, entries) {
 				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
 				return msgArr, err
 			}
@@ -456,10 +465,6 @@ func GetMessages(entries []LogEntry, nodes []Node, dur int, stD string, stT stri
 
 			} else if nextMonth(timeParams["month"], trackers, timeParams["time"], dur) {
 				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
-
-			} else if logEnds(entry, entries) {
-				fmt.Println(entry.Time, msgs)
-				return msgArr, err
 			}
 
 			//reset prevTime to entry time
@@ -517,11 +522,6 @@ func printAndReset(trackers map[string]int, msgs []string, entry LogEntry, timeP
 
 	//add msgs to array
 	msgArr = append(msgArr, msgs)
-
-	//reset msgs
-	for i := 0; i < lenNodes; i++ {
-		msgs[i] = "_"
-	}
 
 	return trackers, msgs, msgArr
 }
