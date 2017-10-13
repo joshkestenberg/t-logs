@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-var order *bool
 var commits *bool
 
 func init() {
@@ -20,10 +19,8 @@ func init() {
 	RootCmd.AddCommand(MsgsCmd)
 	RootCmd.AddCommand(NodesCmd)
 
-	order = MsgsCmd.PersistentFlags().Bool("order", false, "add msgs indicating when logs are out of order")
 	commits = MsgsCmd.PersistentFlags().Bool("commits", false, "add msgs indicating when blocks are committed")
 
-	viper.BindPFlag("order", MsgsCmd.PersistentFlags().Lookup("order"))
 	viper.BindPFlag("commits", MsgsCmd.PersistentFlags().Lookup("commits"))
 
 }
@@ -113,7 +110,7 @@ var MsgsCmd = &cobra.Command{
 			log.Fatal(err)
 		}
 
-		_, err = reader.GetMessages(entries, nodes, dur, stD, stT, enD, enT, *order, *commits)
+		_, err = reader.GetMessages(entries, nodes, dur, stD, stT, enD, enT, *commits)
 		if err != nil {
 			log.Fatal(err)
 		}

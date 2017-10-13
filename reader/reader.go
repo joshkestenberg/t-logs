@@ -382,11 +382,11 @@ func checkExpected(status Status, entry LogEntry, nodes []Node, myIP string) (St
 
 //*****************************************************************************end of GetStatus functions*************************************************
 
-func GetMessages(entries []LogEntry, nodes []Node, dur int, stD string, stT string, enD string, enT string, order bool, commits bool) ([][]string, error) {
+func GetMessages(entries []LogEntry, nodes []Node, dur int, stD string, stT string, enD string, enT string, commits bool) ([][]string, error) {
 	var trackers = make(map[string]int)
 	var timeParams = make(map[string]int)
+	var timeStamp string
 
-	var prevTime int
 	var parse bool
 	var watch bool
 	var err error
@@ -397,20 +397,16 @@ func GetMessages(entries []LogEntry, nodes []Node, dur int, stD string, stT stri
 
 	lenNodes := len(nodes)
 
-	var msgs []string
-
 	myIp := findMyIP(entries)
 
+	var msgs []string
+
+	//set msgs
 	for i := 0; i < len(nodes); i++ {
 		msgs = append(msgs, "_")
 	}
 
 	for _, entry := range entries {
-
-		//reset msgs
-		for i := 0; i < lenNodes; i++ {
-			msgs[i] = "_"
-		}
 
 		//check if we should start parsing
 		if entry.Date == stD && strings.Contains(entry.Time, stT) && parse == false {
@@ -427,49 +423,66 @@ func GetMessages(entries []LogEntry, nodes []Node, dur int, stD string, stT stri
 			timeParams, err = parseEntryTime(timeParams, entry)
 			//return if parse time has elapsed
 			if watch == true && !strings.Contains(entry.Time, enT) {
+				trackers, msgs, msgArr = printAndReset(timeStamp, trackers, msgs, entry, timeParams, lenNodes, msgArr)
 				return msgArr, err
 			}
 
 			//set up our trackers if first log entry read
 			if first == true {
+				timeStamp = entry.Time
 				trackers = updateParams(trackers, timeParams)
 				first = false
-			} else if timeParams["time"] < prevTime && order == true {
-				//if order flag is added
-				fmt.Println(entry.Time, "ERROR: LOGS OUT OF ORDER\n")
+			}
+
+			//msgs will reset once printed
+			printed := false
+
+			//this if/else statement determines when to return a statement, accounting for the turnover of minutes, hours, days, months, years
+			if normalElapse(timeParams["time"], trackers, dur) {
+				trackers, msgs, msgArr = printAndReset(timeStamp, trackers, msgs, entry, timeParams, lenNodes, msgArr)
+				printed = true
+
+			} else if nextMinute(timeParams["minute"], trackers, timeParams["time"], dur) {
+				trackers, msgs, msgArr = printAndReset(timeStamp, trackers, msgs, entry, timeParams, lenNodes, msgArr)
+				printed = true
+
+			} else if nextHour(timeParams["hour"], trackers, timeParams["time"], dur) {
+				trackers, msgs, msgArr = printAndReset(timeStamp, trackers, msgs, entry, timeParams, lenNodes, msgArr)
+				printed = true
+
+			} else if nextDay(timeParams["day"], trackers, timeParams["time"], dur) {
+				trackers, msgs, msgArr = printAndReset(timeStamp, trackers, msgs, entry, timeParams, lenNodes, msgArr)
+				printed = true
+
+			} else if nextMonth(timeParams["month"], trackers, timeParams["time"], dur) {
+				trackers, msgs, msgArr = printAndReset(timeStamp, trackers, msgs, entry, timeParams, lenNodes, msgArr)
+				printed = true
+
+			}
+
+			//reset msgs if logged
+			if printed {
+				msgs = []string{}
+
+				for i := 0; i < lenNodes; i++ {
+					msgs = append(msgs, "_")
+				}
 			}
 
 			//read entry and update msgs
-			msgs, err := getMsg(msgs, entry, nodes, myIp, commits)
+			msgs, err = getMsg(msgs, entry, nodes, myIp, commits)
 			if err != nil {
 				return msgArr, err
 			}
 
+			//return if last entry
 			if logEnds(entry, entries) {
-				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
+				trackers, msgs, msgArr = printAndReset(timeStamp, trackers, msgs, entry, timeParams, lenNodes, msgArr)
 				return msgArr, err
 			}
 
-			//this if/else statement determines when to return a statement, accounting for the turnover of minutes, hours, days, months, years
-			if normalElapse(timeParams["time"], trackers, dur) {
-				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
-
-			} else if nextMinute(timeParams["minute"], trackers, timeParams["time"], dur) {
-				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
-
-			} else if nextHour(timeParams["hour"], trackers, timeParams["time"], dur) {
-				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
-
-			} else if nextDay(timeParams["day"], trackers, timeParams["time"], dur) {
-				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
-
-			} else if nextMonth(timeParams["month"], trackers, timeParams["time"], dur) {
-				trackers, msgs, msgArr = printAndReset(trackers, msgs, entry, timeParams, lenNodes, msgArr)
-			}
-
-			//reset prevTime to entry time
-			prevTime = timeParams["time"]
-
+			//reset timestamp
+			timeStamp = entry.Time
 		}
 	}
 	return msgArr, err
@@ -513,9 +526,9 @@ func parseEntryTime(timeParams map[string]int, entry LogEntry) (map[string]int, 
 }
 
 //prints msgs to console, updates time parameters, resets msgs array
-func printAndReset(trackers map[string]int, msgs []string, entry LogEntry, timeParams map[string]int, lenNodes int, msgArr [][]string) (map[string]int, []string, [][]string) {
+func printAndReset(timeStamp string, trackers map[string]int, msgs []string, entry LogEntry, timeParams map[string]int, lenNodes int, msgArr [][]string) (map[string]int, []string, [][]string) {
 	//print to command line
-	fmt.Println(entry.Time, msgs)
+	fmt.Println(timeStamp, msgs)
 
 	//update trackers
 	trackers = updateParams(trackers, timeParams)
@@ -571,7 +584,7 @@ func getMsg(msgs []string, entry LogEntry, nodes []Node, myIp string, commits bo
 			}
 		}
 	} else if entry.Descrip == "Block{}" && commits == true {
-		return []string{"Block committed"}, nil
+		fmt.Println(entry.Time, "Block committed")
 	}
 
 	return msgs, nil

@@ -199,12 +199,13 @@ func TestGetMessages(t *testing.T) {
 	nodes := NODES
 
 	testCases := []struct {
-		entries []reader.LogEntry
-		msgArr  [][]string
+		entries            []reader.LogEntry
+		msgArr             [][]string
+		stD, enD, stT, enT string
 	}{
 		{
 			//assert all nodes register accross different times
-			[]reader.LogEntry{
+			entries: []reader.LogEntry{
 				reader.LogEntry{"", "08-14", "00:00:00.000", "Starting DefaultListener", "", map[string]string{"impl": "Listener(@172.31.36.95:46656)"}},
 				reader.LogEntry{"", "08-14", "00:00:00.001", "Receive", "",
 					map[string]string{"src": "Peer{MConn{172.31.44.161:46656} 4F85D81F23AB out}"}},
@@ -217,21 +218,82 @@ func TestGetMessages(t *testing.T) {
 				reader.LogEntry{"", "08-14", "00:00:00.005", "Receive", "",
 					map[string]string{"src": "Peer{MConn{172.31.32.72:46656} D7ECACFDC10F in}"}},
 			},
-			[][]string{
-				{"X", "_", "_", "_", "_"}, {"_", "X", "_", "_", "_"}, {"_", "_", "O", "_", "_"}, {"_", "_", "_", "X", "_"}, {"_", "_", "_", "_", "X"},
+			msgArr: [][]string{
+				{"_", "_", "_", "_", "_"}, {"X", "_", "_", "_", "_"}, {"_", "X", "_", "_", "_"}, {"_", "_", "O", "_", "_"}, {"_", "_", "_", "X", "_"}, {"_", "_", "_", "_", "X"},
 			},
+			stD: "08-14",
+			enD: "08-14",
+			stT: "00:00:00.000",
+			enT: "00:00:00.005",
 		},
-		// {
-		// 	[]reader.LogEntry{},
-		// 	[][]string{
-		// 		{}, {}, {},
-		// 	},
-		// },
+		{
+			entries: []reader.LogEntry{
+				reader.LogEntry{"", "08-14", "00:00:00.000", "Starting DefaultListener", "", map[string]string{"impl": "Listener(@172.31.36.95:46656)"}},
+				reader.LogEntry{"", "08-14", "00:00:00.001", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.44.161:46656} 4F85D81F23AB out}"}},
+				reader.LogEntry{"", "08-14", "00:00:00.001", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.39.83:46656} 1BF7CA4820CD out}"}},
+				reader.LogEntry{"", "08-14", "00:00:00.001", "Signed and pushed vote", "",
+					map[string]string{"height": "1", "round": "0", "vote": "Vote{4:E40892926ECF 1/00/2(Precommit) 000000000000 /C28769ADBAD2.../}"}},
+				reader.LogEntry{"", "08-14", "00:00:00.001", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.46.4:58661} 1BF7CA4820CD out}"}},
+				reader.LogEntry{"", "08-14", "00:00:00.001", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.32.72:46656} D7ECACFDC10F in}"}},
+			},
+			msgArr: [][]string{
+				{"_", "_", "_", "_", "_"}, {"X", "X", "O", "X", "X"},
+			},
+			stD: "08-14",
+			enD: "08-14",
+			stT: "00:00:00.000",
+			enT: "00:00:00.005",
+		},
+		{
+			//ensure parser starts at correct time; all rollovers work; parser stops before log end if needed
+			entries: []reader.LogEntry{
+				reader.LogEntry{"", "08-14", "00:00:00.996", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.44.161:46656} 4F85D81F23AB out}"}},
+				reader.LogEntry{"", "08-14", "00:00:00.997", "Starting DefaultListener", "", map[string]string{"impl": "Listener(@172.31.36.95:46656)"}},
+				reader.LogEntry{"", "08-14", "00:00:00.997", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.39.83:46656} 1BF7CA4820CD out}"}},
+				reader.LogEntry{"", "08-14", "00:00:00.998", "Signed and pushed vote", "",
+					map[string]string{"height": "1", "round": "0", "vote": "Vote{4:E40892926ECF 1/00/2(Precommit) 000000000000 /C28769ADBAD2.../}"}},
+				reader.LogEntry{"", "08-14", "00:00:00.998", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.46.4:58661} 1BF7CA4820CD out}"}},
+				reader.LogEntry{"", "08-14", "00:00:01.001", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.32.72:46656} D7ECACFDC10F in}"}},
+				reader.LogEntry{"", "08-14", "23:40:00.998", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.46.4:58661} 1BF7CA4820CD out}"}},
+				reader.LogEntry{"", "08-14", "23:40:00.998", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.32.72:46656} D7ECACFDC10F in}"}},
+				reader.LogEntry{"", "08-15", "00:00:00.998", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.32.72:46656} 1BF7CA4820CD out}"}},
+				reader.LogEntry{"", "08-15", "00:00:01.001", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.32.72:46656} D7ECACFDC10F in}"}},
+				reader.LogEntry{"", "08-15", "01:00:01.000", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.32.72:46656} D7ECACFDC10F in}"}},
+				reader.LogEntry{"", "09-13", "00:00:00.998", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.32.72:46656} 1BF7CA4820CD out}"}},
+				reader.LogEntry{"", "09-15", "01:00:01.005", "Block{}", "",
+					map[string]string{}},
+				reader.LogEntry{"", "09-15", "01:00:01.005", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.46.4:58661} 1BF7CA4820CD out}"}},
+				reader.LogEntry{"", "09-16", "00:00:00.998", "Receive", "",
+					map[string]string{"src": "Peer{MConn{172.31.32.72:46656} 1BF7CA4820CD out}"}},
+			},
+			msgArr: [][]string{
+				{"_", "X", "_", "_", "_"}, {"_", "_", "O", "X", "_"}, {"_", "_", "_", "_", "X"}, {"_", "_", "_", "X", "X"}, {"_", "_", "_", "_", "X"}, {"_", "_", "_", "_", "X"}, {"_", "_", "_", "_", "X"}, {"_", "_", "_", "_", "X"}, {"_", "_", "_", "X", "_"},
+			},
+			stD: "08-14",
+			enD: "09-15",
+			stT: "00:00:00.997",
+			enT: "01:00:01.005",
+		},
 	}
 
 	for _, testCase := range testCases {
 
-		msgArr, _ := reader.GetMessages(testCase.entries, nodes, 1, "08-14", "00:00:00.000", "08-14", "00:00:00.005", false, false)
+		msgArr, _ := reader.GetMessages(testCase.entries, nodes, 1, testCase.stD, testCase.stT, testCase.enD, testCase.enT, true)
 		if !reflect.DeepEqual(testCase.msgArr, msgArr) {
 			t.Errorf("expected %s, received %s", testCase.msgArr, msgArr)
 		}
