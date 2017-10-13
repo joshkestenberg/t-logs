@@ -105,6 +105,7 @@ func UnmarshalLine(line string) (reader.LogEntry, error) {
 	//if the line describes a block, it needs to be specially processed
 	if strings.Contains(descrip, "Block{") {
 		entry.Module = "consensus"
+		entry.Other = map[string]string{}
 
 		if strings.Contains(descrip, "Signed proposal block") {
 			entry.Descrip = "Signed proposal block: Block{}"
