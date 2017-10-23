@@ -36,7 +36,7 @@ var StateCmd = &cobra.Command{
 	Y = received nil vote
 	N = sent nil vote
 
-  Takes thre args: peer file path, date (01-01), and time (00:00:00[.000 if you'd like more specificity])`,
+  Takes two args: date (01-01), and time (00:00:00[.000 if you'd like more specificity])`,
 	Run: func(cmd *cobra.Command, args []string) {
 
 		if len(args) != 2 {
@@ -72,13 +72,11 @@ var StateCmd = &cobra.Command{
 
 var MsgsCmd = &cobra.Command{
 	Use:   "msgs",
-	Short: "See what messages a given node has received at intervals of a given length",
-	Long: `For a given node at a given date and time, state will display height, round, step, proposal, block parts received, prevotes received, and precommits received.
+	Short: "See what messages a given node has received at intervals of a given length over a given duration",
+	Long: `For a given node over a given period of time, msgs will display a graphical representation of nodes from whom a message has been received, and whether or not a message has been sent by the given node.
 
-	X = received vote
-	O = sent vote
-	Y = received nil vote
-	N = sent nil vote
+	X = received msg
+	O = sent msg
 
   Takes five args: duration in miliseconds (up to 59999), start date (01-01), start time (00:00:00[.000 if you'd like more specificity]), end date, and end time.`,
 	Run: func(cmd *cobra.Command, args []string) {
